@@ -811,7 +811,10 @@ impl ParquetDataCatalog {
             if let Ok(url) = url::Url::parse(&self.original_uri)
                 && let Ok(base_path) = url.to_file_path()
             {
-                return format!("{}/{}", base_path.display(), path_str);
+                // Use platform-appropriate path separator for display
+                // but object store paths always use forward slashes
+                let base_str = base_path.to_string_lossy();
+                return self.join_paths(&base_str, path_str);
             }
         }
 
@@ -822,11 +825,26 @@ impl ParquetDataCatalog {
                 // Fallback: return the path as-is
                 path_str.to_string()
             } else {
-                format!("{}/{}", self.original_uri.trim_end_matches('/'), path_str)
+                self.join_paths(self.original_uri.trim_end_matches('/'), path_str)
             }
         } else {
             let base = self.base_path.trim_end_matches('/');
-            format!("{base}/{path_str}")
+            self.join_paths(base, path_str)
+        }
+    }
+
+    /// Helper method to join paths using forward slashes (object store convention)
+    #[must_use]
+    fn join_paths(&self, base: &str, path: &str) -> String {
+        let base_clean = base.trim_end_matches('/').trim_end_matches('\\');
+        let path_clean = path.trim_start_matches('/').trim_start_matches('\\');
+
+        if base_clean.is_empty() {
+            path_clean.to_string()
+        } else if path_clean.is_empty() {
+            base_clean.to_string()
+        } else {
+            format!("{base_clean}/{path_clean}")
         }
     }
 
@@ -1539,8 +1557,9 @@ impl ParquetDataCatalog {
     ///
     /// - If `base_path` is empty, the path is used as-is.
     /// - If `base_path` is set, it's stripped from the path if present.
-    /// - Trailing slashes are automatically handled.
+    /// - Trailing slashes and backslashes are automatically handled.
     /// - The resulting path is relative to the object store root.
+    /// - All paths are normalized to use forward slashes (object store convention).
     ///
     /// # Examples
     ///
@@ -1559,17 +1578,22 @@ impl ParquetDataCatalog {
     /// ```
     #[must_use]
     pub fn to_object_path(&self, path: &str) -> ObjectPath {
+        // Normalize path separators to forward slashes for object store
+        let normalized_path = path.replace('\\', "/");
+
         if self.base_path.is_empty() {
-            return ObjectPath::from(path);
+            return ObjectPath::from(normalized_path);
         }
 
-        let base = self.base_path.trim_end_matches('/');
+        // Normalize base path separators as well
+        let normalized_base = self.base_path.replace('\\', "/");
+        let base = normalized_base.trim_end_matches('/');
 
         // Remove the catalog base prefix if present
-        let without_base = path
+        let without_base = normalized_path
             .strip_prefix(&format!("{base}/"))
-            .or_else(|| path.strip_prefix(base))
-            .unwrap_or(path);
+            .or_else(|| normalized_path.strip_prefix(base))
+            .unwrap_or(&normalized_path);
 
         ObjectPath::from(without_base)
     }
