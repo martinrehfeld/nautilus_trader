@@ -49,16 +49,17 @@ Usage:
 import asyncio
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
+from datetime import timedelta
 from decimal import Decimal
 
-from nautilus_trader.adapters.alpaca import (
-    AlpacaHttpClient,
-)
+from nautilus_trader.adapters.alpaca import AlpacaHttpClient
 
 
 def check_credentials() -> tuple[str, str]:
-    """Check and return API credentials."""
+    """
+    Check and return API credentials.
+    """
     api_key = os.getenv("ALPACA_API_KEY")
     api_secret = os.getenv("ALPACA_API_SECRET")
 
@@ -93,6 +94,7 @@ async def get_option_chain(
     -------
     list[dict]
         List of option contracts
+
     """
     # Calculate date range
     today = datetime.now().date()
@@ -114,7 +116,7 @@ async def get_option_chain(
 
 async def example_bull_call_spread(client: AlpacaHttpClient, underlying: str = "SPY"):
     """
-    Example: Bull Call Spread
+    Demonstrate bull call spread construction.
 
     Strategy:
         - Buy lower strike call (ITM or ATM)
@@ -124,6 +126,7 @@ async def example_bull_call_spread(client: AlpacaHttpClient, underlying: str = "
 
     Profit: Max when underlying > higher strike
     Loss: Max when underlying < lower strike
+
     """
     print("\n" + "=" * 70)
     print("Bull Call Spread Example")
@@ -144,7 +147,7 @@ async def example_bull_call_spread(client: AlpacaHttpClient, underlying: str = "
     calls = [c for c in contracts if c.get("type") == "call"]
 
     # Find a suitable expiration
-    expirations = list(set(c.get("expiration_date") for c in calls))
+    expirations = list({c.get("expiration_date") for c in calls})
     if not expirations:
         print("No expirations found")
         return
@@ -177,8 +180,6 @@ async def example_bull_call_spread(client: AlpacaHttpClient, underlying: str = "
     # Preview margin requirement
     print("Previewing margin requirement...")
     try:
-        from nautilus_trader.adapters.alpaca.execution import AlpacaExecutionClient
-
         # Note: In production, you'd use the full execution client
         # For this example, we'll just show the structure
 
@@ -231,7 +232,7 @@ async def example_bull_call_spread(client: AlpacaHttpClient, underlying: str = "
 
 async def example_iron_condor(client: AlpacaHttpClient, underlying: str = "SPY"):
     """
-    Example: Iron Condor
+    Demonstrate iron condor construction.
 
     Strategy:
         - Sell OTM put (lower strike)
@@ -243,6 +244,7 @@ async def example_iron_condor(client: AlpacaHttpClient, underlying: str = "SPY")
 
     Profit: Max when underlying stays between sold strikes
     Loss: Max if underlying moves beyond bought strikes
+
     """
     print("\n" + "=" * 70)
     print("Iron Condor Example")
@@ -264,7 +266,7 @@ async def example_iron_condor(client: AlpacaHttpClient, underlying: str = "SPY")
     puts = [c for c in contracts if c.get("type") == "put"]
 
     # Find a suitable expiration
-    expirations = list(set(c.get("expiration_date") for c in contracts))
+    expirations = list({c.get("expiration_date") for c in contracts})
     if not expirations:
         print("No expirations found")
         return

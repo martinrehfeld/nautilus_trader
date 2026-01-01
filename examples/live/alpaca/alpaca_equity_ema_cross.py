@@ -42,38 +42,36 @@ import os
 import sys
 from decimal import Decimal
 
-from nautilus_trader.adapters.alpaca import (
-    ALPACA_VENUE,
-    AlpacaDataClientConfig,
-    AlpacaDataFeed,
-    AlpacaExecClientConfig,
-    AlpacaInstrumentProviderConfig,
-    AlpacaLiveDataClientFactory,
-    AlpacaLiveExecClientFactory,
-)
-from nautilus_trader.config import (
-    LoggingConfig,
-    TradingNodeConfig,
-)
-from nautilus_trader.core.datetime import dt_to_unix_nanos
+from nautilus_trader.adapters.alpaca import ALPACA_VENUE
+from nautilus_trader.adapters.alpaca import AlpacaDataClientConfig
+from nautilus_trader.adapters.alpaca import AlpacaDataFeed
+from nautilus_trader.adapters.alpaca import AlpacaExecClientConfig
+from nautilus_trader.adapters.alpaca import AlpacaInstrumentProviderConfig
+from nautilus_trader.adapters.alpaca import AlpacaLiveDataClientFactory
+from nautilus_trader.adapters.alpaca import AlpacaLiveExecClientFactory
+from nautilus_trader.config import LoggingConfig
+from nautilus_trader.config import TradingNodeConfig
 from nautilus_trader.indicators import ExponentialMovingAverage
 from nautilus_trader.live.node import TradingNode
 from nautilus_trader.model.data import BarType
 from nautilus_trader.model.enums import OrderSide
-from nautilus_trader.model.identifiers import InstrumentId, TraderId
+from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import TraderId
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading import Strategy
 from nautilus_trader.trading.config import StrategyConfig
 
 
 class EMACrossConfig(StrategyConfig, frozen=True):
-    """Configuration for EMA cross strategy."""
+    """
+    Configuration for EMA cross strategy.
+    """
 
     instrument_id: InstrumentId
     bar_type: BarType
     fast_ema_period: int = 10
     slow_ema_period: int = 20
-    trade_size: Decimal = Decimal("100")  # Dollar amount to trade
+    trade_size: Decimal = Decimal(100)  # Dollar amount to trade
 
 
 class EMACrossStrategy(Strategy):
@@ -85,6 +83,7 @@ class EMACrossStrategy(Strategy):
         - SELL when fast EMA crosses below slow EMA (death cross)
         - Uses market orders for immediate execution
         - Flat position when EMAs are not crossed
+
     """
 
     def __init__(self, config: EMACrossConfig):
@@ -101,7 +100,9 @@ class EMACrossStrategy(Strategy):
         self.fast_above_slow = False
 
     def on_start(self):
-        """Actions to perform on strategy start."""
+        """
+        Actions to perform on strategy start.
+        """
         self.log.info(f"Starting EMA Cross strategy for {self.instrument_id}")
         self.log.info(f"Fast EMA: {self.fast_ema.period}, Slow EMA: {self.slow_ema.period}")
         self.log.info(f"Trade size: ${self.trade_size}")
@@ -120,6 +121,7 @@ class EMACrossStrategy(Strategy):
         ----------
         bar : Bar
             The bar data received
+
         """
         # Update EMAs
         self.fast_ema.handle_bar(bar)
@@ -133,7 +135,7 @@ class EMACrossStrategy(Strategy):
         # Log current EMA values
         self.log.info(
             f"Bar: {bar.close} | Fast EMA: {self.fast_ema.value:.2f} | "
-            f"Slow EMA: {self.slow_ema.value:.2f}"
+            f"Slow EMA: {self.slow_ema.value:.2f}",
         )
 
         # Check for crossover
@@ -153,7 +155,9 @@ class EMACrossStrategy(Strategy):
         self.fast_above_slow = fast_now_above
 
     def _enter_long(self):
-        """Enter a long position."""
+        """
+        Enter a long position.
+        """
         # Check if already in position
         if self.portfolio.is_flat(self.instrument_id):
             # Get instrument for price precision
@@ -176,7 +180,9 @@ class EMACrossStrategy(Strategy):
             self.log.info("Already in long position, skipping BUY")
 
     def _exit_long(self):
-        """Exit long position."""
+        """
+        Exit long position.
+        """
         # Check if we have a position to close
         if not self.portfolio.is_flat(self.instrument_id):
             # Get current position
@@ -194,18 +200,24 @@ class EMACrossStrategy(Strategy):
             self.log.info("No position to close, skipping SELL")
 
     def on_order_filled(self, event):
-        """Handle order filled events."""
+        """
+        Handle order filled events.
+        """
         self.log.info(
             f"✅ Order filled: {event.client_order_id} | "
-            f"Price: ${event.last_px} | Qty: {event.last_qty}"
+            f"Price: ${event.last_px} | Qty: {event.last_qty}",
         )
 
     def on_order_rejected(self, event):
-        """Handle order rejected events."""
+        """
+        Handle order rejected events.
+        """
         self.log.error(f"❌ Order rejected: {event.client_order_id} | Reason: {event.reason}")
 
     def on_stop(self):
-        """Actions to perform on strategy stop."""
+        """
+        Actions to perform on strategy stop.
+        """
         # Close any open positions
         if not self.portfolio.is_flat(self.instrument_id):
             self.log.info("Closing position on stop...")
@@ -271,7 +283,7 @@ def main():
         bar_type=bar_type,
         fast_ema_period=10,
         slow_ema_period=20,
-        trade_size=Decimal("1000"),  # $1000 per trade
+        trade_size=Decimal(1000),  # $1000 per trade
     )
     strategy = EMACrossStrategy(config=strategy_config)
 
