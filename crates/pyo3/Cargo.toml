@@ -26,6 +26,7 @@ default = []
 cython-compat = []
 defi = ["dep:nautilus-blockchain", "nautilus-blockchain/python"]
 extension-module = [
+  "nautilus-alpaca/extension-module",
   "nautilus-analysis/extension-module",
   "nautilus-architect-ax/extension-module",
   "nautilus-binance/extension-module",
@@ -100,6 +101,7 @@ nautilus-testkit = { workspace = true, features = ["python"] }
 nautilus-trading = { workspace = true, features = ["python"] }
 
 # Adapters
+nautilus-alpaca = { workspace = true, features = ["python"] }
 nautilus-architect-ax = { workspace = true, features = ["python"] }
 nautilus-binance = { workspace = true, features = ["python"] }
 nautilus-bitmex = { workspace = true, features = ["python"] }
