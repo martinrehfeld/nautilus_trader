@@ -101,6 +101,9 @@ dev = [
   "ruff==0.14.10", # Pinned to 0.14.10 (keep in line with pre-commit)
   "types-pytz>=2025.2,<2026.0",
   "types-toml>=0.10.2,<1.0.0",
+  "poetry>=2.2.1",
+  "pytest-mock>=3.15.1",
+  "pytest-asyncio>=0.23.8",
 ]
 test = [
   "aiohttp==3.12.14,<4.0.0", # Pinned to 3.12.14 (fixes GHSA-9548-qrrj-x5pj)
