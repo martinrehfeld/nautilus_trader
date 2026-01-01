@@ -48,32 +48,33 @@ import os
 import sys
 from decimal import Decimal
 
-from nautilus_trader.adapters.alpaca import (
-    ALPACA_VENUE,
-    AlpacaAssetClass,
-    AlpacaDataClientConfig,
-    AlpacaDataFeed,
-    AlpacaExecClientConfig,
-    AlpacaInstrumentProviderConfig,
-    AlpacaLiveDataClientFactory,
-    AlpacaLiveExecClientFactory,
-)
-from nautilus_trader.config import (
-    LoggingConfig,
-    TradingNodeConfig,
-)
+from nautilus_trader.adapters.alpaca import ALPACA_VENUE
+from nautilus_trader.adapters.alpaca import AlpacaAssetClass
+from nautilus_trader.adapters.alpaca import AlpacaDataClientConfig
+from nautilus_trader.adapters.alpaca import AlpacaDataFeed
+from nautilus_trader.adapters.alpaca import AlpacaExecClientConfig
+from nautilus_trader.adapters.alpaca import AlpacaInstrumentProviderConfig
+from nautilus_trader.adapters.alpaca import AlpacaLiveDataClientFactory
+from nautilus_trader.adapters.alpaca import AlpacaLiveExecClientFactory
+from nautilus_trader.config import LoggingConfig
+from nautilus_trader.config import TradingNodeConfig
 from nautilus_trader.indicators import AverageTrueRange
 from nautilus_trader.live.node import TradingNode
 from nautilus_trader.model.data import BarType
-from nautilus_trader.model.enums import OrderSide, TimeInForce
-from nautilus_trader.model.identifiers import InstrumentId, TraderId
-from nautilus_trader.model.objects import Price, Quantity
+from nautilus_trader.model.enums import OrderSide
+from nautilus_trader.model.enums import TimeInForce
+from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import TraderId
+from nautilus_trader.model.objects import Price
+from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading import Strategy
 from nautilus_trader.trading.config import StrategyConfig
 
 
 class CryptoScalperConfig(StrategyConfig, frozen=True):
-    """Configuration for crypto scalper strategy."""
+    """
+    Configuration for crypto scalper strategy.
+    """
 
     instrument_id: InstrumentId
     bar_type: BarType
@@ -81,7 +82,7 @@ class CryptoScalperConfig(StrategyConfig, frozen=True):
     volatility_threshold: float = 0.02  # 2% volatility threshold
     profit_target_atr_multiple: float = 2.0  # Take profit at 2x ATR
     stop_loss_atr_multiple: float = 1.0  # Stop loss at 1x ATR
-    position_size_usd: Decimal = Decimal("100")  # Position size in USD
+    position_size_usd: Decimal = Decimal(100)  # Position size in USD
 
 
 class CryptoScalperStrategy(Strategy):
@@ -94,6 +95,7 @@ class CryptoScalperStrategy(Strategy):
         - Stop loss at 1x ATR below entry
         - Uses limit orders for better fills
         - Flat position when no setup
+
     """
 
     def __init__(self, config: CryptoScalperConfig):
@@ -113,7 +115,9 @@ class CryptoScalperStrategy(Strategy):
         self.last_high = None
 
     def on_start(self):
-        """Actions to perform on strategy start."""
+        """
+        Actions to perform on strategy start.
+        """
         self.log.info(f"Starting Crypto Scalper for {self.instrument_id}")
         self.log.info(f"ATR Period: {self.atr.period}")
         self.log.info(f"Position Size: ${self.position_size_usd}")
@@ -133,6 +137,7 @@ class CryptoScalperStrategy(Strategy):
         ----------
         bar : Bar
             The bar data received
+
         """
         # Update ATR
         self.atr.handle_bar(bar)
@@ -149,8 +154,7 @@ class CryptoScalperStrategy(Strategy):
         volatility_pct = float(atr_value) / float(current_price)
 
         self.log.info(
-            f"Bar: ${current_price} | ATR: ${atr_value:.2f} | "
-            f"Volatility: {volatility_pct:.2%}"
+            f"Bar: ${current_price} | ATR: ${atr_value:.2f} | Volatility: {volatility_pct:.2%}",
         )
 
         # Update last high
@@ -169,17 +173,24 @@ class CryptoScalperStrategy(Strategy):
             self._manage_position(bar, position)
 
     def _check_entry_signal(self, bar, volatility_pct):
-        """Check for entry signals."""
+        """
+        Check for entry signals.
+        """
         # Entry conditions:
         # 1. Volatility above threshold
         # 2. Price breaks above recent high
-        if volatility_pct >= self.volatility_threshold:
-            if self.last_high and bar.close > self.last_high:
-                self.log.info("🚀 BREAKOUT SIGNAL - Entering long position!")
-                self._enter_long(bar)
+        if (
+            volatility_pct >= self.volatility_threshold
+            and self.last_high
+            and bar.close > self.last_high
+        ):
+            self.log.info("🚀 BREAKOUT SIGNAL - Entering long position!")
+            self._enter_long(bar)
 
     def _enter_long(self, bar):
-        """Enter a long position with limit order."""
+        """
+        Enter a long position with limit order.
+        """
         instrument = self.cache.instrument(self.instrument_id)
         if not instrument:
             self.log.warning("Instrument not found, cannot place order")
@@ -206,7 +217,7 @@ class CryptoScalperStrategy(Strategy):
         self.entry_price = entry_price
         self.log.info(
             f"📈 Submitted BUY limit order: {order.client_order_id} | "
-            f"Price: ${limit_price} | Qty: {quantity}"
+            f"Price: ${limit_price} | Qty: {quantity}",
         )
 
     def _manage_position(self, bar, position):
@@ -235,11 +246,13 @@ class CryptoScalperStrategy(Strategy):
             self.log.info(
                 f"Position: Entry=${self.entry_price:.2f} | Current=${current_price:.2f} | "
                 f"P/L: ${pnl:.2f} ({pnl_pct:+.2f}%) | "
-                f"Target=${profit_target:.2f} | Stop=${stop_loss:.2f}"
+                f"Target=${profit_target:.2f} | Stop=${stop_loss:.2f}",
             )
 
     def _exit_position(self, position, reason: str):
-        """Exit position with limit order."""
+        """
+        Exit position with limit order.
+        """
         instrument = self.cache.instrument(self.instrument_id)
         if not instrument:
             return
@@ -265,27 +278,33 @@ class CryptoScalperStrategy(Strategy):
         self.submit_order(order)
         self.log.info(
             f"📉 Submitted SELL limit order ({reason}): {order.client_order_id} | "
-            f"Price: ${limit_price} | Qty: {position.quantity}"
+            f"Price: ${limit_price} | Qty: {position.quantity}",
         )
 
         # Reset entry price
         self.entry_price = None
 
     def on_order_filled(self, event):
-        """Handle order filled events."""
+        """
+        Handle order filled events.
+        """
         self.log.info(
             f"✅ Order filled: {event.client_order_id} | "
-            f"Price: ${event.last_px} | Qty: {event.last_qty}"
+            f"Price: ${event.last_px} | Qty: {event.last_qty}",
         )
 
     def on_order_rejected(self, event):
-        """Handle order rejected events."""
+        """
+        Handle order rejected events.
+        """
         self.log.error(f"❌ Order rejected: {event.client_order_id} | Reason: {event.reason}")
         # Reset state on rejection
         self.entry_price = None
 
     def on_stop(self):
-        """Actions to perform on strategy stop."""
+        """
+        Actions to perform on strategy stop.
+        """
         # Close any open positions
         if not self.portfolio.is_flat(self.instrument_id):
             self.log.info("Closing position on stop...")
@@ -356,7 +375,7 @@ def main():
         volatility_threshold=0.02,  # 2% volatility
         profit_target_atr_multiple=2.0,  # 2x ATR take profit
         stop_loss_atr_multiple=1.0,  # 1x ATR stop loss
-        position_size_usd=Decimal("100"),  # $100 per trade
+        position_size_usd=Decimal(100),  # $100 per trade
     )
     strategy = CryptoScalperStrategy(config=strategy_config)
 
@@ -398,4 +417,5 @@ def main():
 if __name__ == "__main__":
     # Import PriceType here for the _exit_position method
     from nautilus_trader.model.enums import PriceType
+
     main()
