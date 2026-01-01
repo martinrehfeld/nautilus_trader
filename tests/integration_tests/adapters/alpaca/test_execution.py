@@ -63,6 +63,27 @@ class TestAlpacaOrderBuilding:
             client,
             order,
         )
+        # Bind helper methods used by _build_order_request
+        client._apply_crypto_constraints = (
+            lambda order, alpaca_order_type, alpaca_tif, symbol: (
+                AlpacaExecutionClient._apply_crypto_constraints(
+                    client,
+                    order,
+                    alpaca_order_type,
+                    alpaca_tif,
+                    symbol,
+                )
+            )
+        )
+        client._apply_options_constraints = (
+            lambda alpaca_order_type, alpaca_tif: (
+                AlpacaExecutionClient._apply_options_constraints(
+                    client,
+                    alpaca_order_type,
+                    alpaca_tif,
+                )
+            )
+        )
         return client
 
     def _create_market_order(
@@ -1220,6 +1241,27 @@ class TestAlpacaExecutionClientMarginPreview:
         client._parse_occ_symbol = lambda symbol: AlpacaExecutionClient._parse_occ_symbol(
             client,
             symbol,
+        )
+        # Bind helper methods used by preview_mleg_margin
+        client._validate_and_convert_leg = (
+            lambda leg, leg_index, quantity: AlpacaExecutionClient._validate_and_convert_leg(
+                client,
+                leg,
+                leg_index,
+                quantity,
+            )
+        )
+        client._calculate_cost_basis_for_legs = (
+            lambda positions, legs, leg_premiums, quantity, contract_multiplier: (
+                AlpacaExecutionClient._calculate_cost_basis_for_legs(
+                    client,
+                    positions,
+                    legs,
+                    leg_premiums,
+                    quantity,
+                    contract_multiplier,
+                )
+            )
         )
         return client
 
