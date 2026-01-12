@@ -46,6 +46,7 @@ RUN find /usr/local/lib/python3.13/site-packages -name "*.pyc" -exec rm -f {} \;
 
 # Final application image
 FROM base AS application
+LABEL org.opencontainers.image.source=https://github.com/martinrehfeld/nautilus_trader
 
 COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=builder /usr/local/bin/ /usr/local/bin/
