@@ -1,6 +1,6 @@
 # Variables
 # -----------------------------------------------------------------------------
-PROJECT?=nautechsystems/nautilus_trader
+PROJECT?=martinrehfeld/nautilus_trader
 REGISTRY?=ghcr.io/
 IMAGE?=$(REGISTRY)$(PROJECT)
 GIT_TAG:=$(shell git rev-parse --abbrev-ref HEAD)
