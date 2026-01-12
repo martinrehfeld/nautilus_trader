@@ -63,7 +63,6 @@ strum = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-tungstenite = { workspace = true }
-tracing = { workspace = true }
 ustr = { workspace = true }
 
 pyo3 = { workspace = true, optional = true }
@@ -73,4 +72,3 @@ pyo3-async-runtimes = { workspace = true, optional = true }
 nautilus-testkit = { workspace = true }
 
 rstest = { workspace = true }
-tracing-test = { workspace = true }
