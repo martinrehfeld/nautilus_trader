@@ -84,7 +84,7 @@ nautilus-trading = { path = "crates/trading", version = "0.52.0" }
 # -----------------------------------------------------------------------------
 # Adapters
 # -----------------------------------------------------------------------------
-nautilus-alpaca = { path = "crates/adapters/alpaca", version = "0.52.0" }
+nautilus-alpaca = { path = "crates/adapters/alpaca", version = "0.53.0" }
 nautilus-binance = { path = "crates/adapters/binance", version = "0.52.0" }
 nautilus-blockchain = { path = "crates/adapters/blockchain", version = "0.52.0" }
 nautilus-bybit = { path = "crates/adapters/bybit", version = "0.52.0" }
