@@ -5,6 +5,9 @@
 Pn = "Pn" # Part of PnL (Profit and Loss)
 PnL = "PnL" # Profit and Loss
 PnLs = "PnLs" # Plural of PnL
+DNE = "DNE" # Do Not Exercise (options trading)
+marginable = "marginable" # Security that can be traded on margin
+Marginable = "Marginable" # Security that can be traded on margin
 
 # Variable naming conventions used throughout the codebase
 strat = "strat" # Common shorthand for strategy
