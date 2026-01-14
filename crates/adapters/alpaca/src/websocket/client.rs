@@ -181,8 +181,10 @@ impl AlpacaWebSocketClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
-    #[test]
+
+    #[rstest]
     fn test_client_creation() {
         let client = AlpacaWebSocketClient::new(
             "test_key".to_string(),
@@ -197,7 +199,7 @@ mod tests {
         assert!(!client.is_connected());
     }
 
-    #[test]
+    #[rstest]
     fn test_auth_message() {
         let client = AlpacaWebSocketClient::new(
             "my_key".to_string(),
@@ -213,7 +215,7 @@ mod tests {
         assert!(msg.contains("\"secret\":\"my_secret\""));
     }
 
-    #[test]
+    #[rstest]
     fn test_subscribe_message() {
         let msg = AlpacaWebSocketClient::subscribe_trades_message(vec![
             "AAPL".to_string(),
@@ -223,7 +225,7 @@ mod tests {
         assert!(msg.contains("\"trades\":[\"AAPL\",\"MSFT\"]"));
     }
 
-    #[test]
+    #[rstest]
     fn test_crypto_url() {
         let client = AlpacaWebSocketClient::new(
             "key".to_string(),
@@ -239,7 +241,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[rstest]
     fn test_options_url() {
         let client = AlpacaWebSocketClient::new(
             "key".to_string(),

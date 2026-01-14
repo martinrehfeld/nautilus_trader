@@ -198,8 +198,10 @@ pub struct AlpacaWsBar {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
-    #[test]
+
+    #[rstest]
     fn test_auth_message_serialization() {
         let msg = AlpacaWsAuthMessage::new("key123".to_string(), "secret456".to_string());
         let json = serde_json::to_string(&msg).unwrap();
@@ -208,7 +210,7 @@ mod tests {
         assert!(json.contains("\"secret\":\"secret456\""));
     }
 
-    #[test]
+    #[rstest]
     fn test_subscribe_message_serialization() {
         let msg = AlpacaWsSubscribeMessage::subscribe(
             vec!["AAPL".to_string()],
@@ -223,7 +225,7 @@ mod tests {
         assert!(!json.contains("bars"));
     }
 
-    #[test]
+    #[rstest]
     fn test_trade_message_deserialization() {
         let json = r#"{"T":"t","S":"AAPL","i":123,"x":"V","p":150.25,"s":100,"t":"2024-01-15T14:30:00Z","c":["@"],"z":"A"}"#;
         let msg: AlpacaWsMessage = serde_json::from_str(json).unwrap();
@@ -237,7 +239,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[rstest]
     fn test_quote_message_deserialization() {
         let json = r#"{"T":"q","S":"AAPL","ax":"V","ap":150.30,"as":500,"bx":"N","bp":150.25,"bs":300,"t":"2024-01-15T14:30:00Z","c":[],"z":"A"}"#;
         let msg: AlpacaWsMessage = serde_json::from_str(json).unwrap();

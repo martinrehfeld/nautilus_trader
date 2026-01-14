@@ -31,9 +31,9 @@ use rust_decimal::{prelude::ToPrimitive, Decimal};
 use super::models::{AlpacaWsBar, AlpacaWsQuote, AlpacaWsTrade};
 use crate::error::{AlpacaError, Result};
 
-// ================================================================================================
+// 
 // Timestamp Parsing
-// ================================================================================================
+// 
 
 /// Parses RFC3339 timestamp string to Unix nanoseconds.
 ///
@@ -66,9 +66,9 @@ pub fn current_timestamp_ns() -> UnixNanos {
     UnixNanos::from(nanos as u64)
 }
 
-// ================================================================================================
+// 
 // Price and Quantity Parsing
-// ================================================================================================
+// 
 
 /// Parses a decimal price with given precision.
 ///
@@ -91,9 +91,9 @@ pub fn parse_quantity(value: u64, precision: u8) -> Result<Quantity> {
     Ok(Quantity::from_raw(value, precision))
 }
 
-// ================================================================================================
+// 
 // Trade Parsing
-// ================================================================================================
+// 
 
 /// Parses an Alpaca WebSocket trade message to a Nautilus `TradeTick`.
 ///
@@ -147,9 +147,9 @@ pub fn parse_trade_tick(
     ))
 }
 
-// ================================================================================================
+// 
 // Quote Parsing
-// ================================================================================================
+// 
 
 /// Parses an Alpaca WebSocket quote message to a Nautilus `QuoteTick`.
 ///
@@ -196,9 +196,9 @@ pub fn parse_quote_tick(
     ))
 }
 
-// ================================================================================================
+// 
 // Bar Parsing
-// ================================================================================================
+// 
 
 /// Parses an Alpaca WebSocket bar message to a Nautilus `Bar`.
 ///
@@ -320,44 +320,46 @@ pub fn parse_timeframe(timeframe: &str) -> Result<(usize, BarAggregation)> {
     }
 }
 
-// ================================================================================================
+// 
 // Tests
-// ================================================================================================
+// 
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
+
     use nautilus_model::identifiers::{Symbol, Venue};
 
-    #[test]
+    #[rstest]
     fn test_parse_timestamp_ns() {
         let ts_str = "2023-08-25T14:30:00Z";
         let result = parse_timestamp_ns(ts_str);
         assert!(result.is_ok());
     }
 
-    #[test]
+    #[rstest]
     fn test_parse_timestamp_with_millis() {
         let ts_str = "2023-08-25T14:30:00.123Z";
         let result = parse_timestamp_ns(ts_str);
         assert!(result.is_ok());
     }
 
-    #[test]
+    #[rstest]
     fn test_parse_timestamp_with_offset() {
         let ts_str = "2023-08-25T14:30:00-04:00";
         let result = parse_timestamp_ns(ts_str);
         assert!(result.is_ok());
     }
 
-    #[test]
+    #[rstest]
     fn test_parse_timestamp_invalid() {
         let ts_str = "not-a-timestamp";
         let result = parse_timestamp_ns(ts_str);
         assert!(result.is_err());
     }
 
-    #[test]
+    #[rstest]
     fn test_parse_timeframe_minutes() {
         let result = parse_timeframe("5Min");
         assert!(result.is_ok());
@@ -366,7 +368,7 @@ mod tests {
         assert_eq!(agg, BarAggregation::Minute);
     }
 
-    #[test]
+    #[rstest]
     fn test_parse_timeframe_hours() {
         let result = parse_timeframe("4Hour");
         assert!(result.is_ok());
@@ -375,7 +377,7 @@ mod tests {
         assert_eq!(agg, BarAggregation::Hour);
     }
 
-    #[test]
+    #[rstest]
     fn test_parse_timeframe_days() {
         let result = parse_timeframe("1Day");
         assert!(result.is_ok());
@@ -384,13 +386,13 @@ mod tests {
         assert_eq!(agg, BarAggregation::Day);
     }
 
-    #[test]
+    #[rstest]
     fn test_parse_timeframe_invalid() {
         let result = parse_timeframe("5Second");
         assert!(result.is_err());
     }
 
-    #[test]
+    #[rstest]
     fn test_parse_trade_tick() {
         let trade = AlpacaWsTrade {
             msg_type: "t".to_string(),
@@ -418,7 +420,7 @@ mod tests {
         assert_eq!(tick.size.raw, 100);
     }
 
-    #[test]
+    #[rstest]
     fn test_parse_quote_tick() {
         let quote = AlpacaWsQuote {
             msg_type: "q".to_string(),
@@ -449,7 +451,7 @@ mod tests {
         assert_eq!(tick.bid_size.raw, 150);
     }
 
-    #[test]
+    #[rstest]
     fn test_parse_bar() {
         let bar_data = AlpacaWsBar {
             msg_type: "b".to_string(),

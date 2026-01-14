@@ -165,9 +165,9 @@ impl AlpacaExecutionClient {
         self.instruments.get(instrument_id)
     }
 
-    // =============================================================================================
+    // 
     // Order Submission
-    // =============================================================================================
+    // 
 
     /// Submits an order to Alpaca.
     ///
@@ -225,9 +225,9 @@ impl AlpacaExecutionClient {
         Ok(venue_order_id)
     }
 
-    // =============================================================================================
+    // 
     // Order Modification
-    // =============================================================================================
+    // 
 
     /// Modifies an existing order.
     ///
@@ -273,9 +273,9 @@ impl AlpacaExecutionClient {
         Ok(())
     }
 
-    // =============================================================================================
+    // 
     // Order Cancellation
-    // =============================================================================================
+    // 
 
     /// Cancels an order.
     ///
@@ -326,9 +326,9 @@ impl AlpacaExecutionClient {
         Ok(statuses)
     }
 
-    // =============================================================================================
+    // 
     // Position Management
-    // =============================================================================================
+    // 
 
     /// Closes a position.
     ///
@@ -364,9 +364,9 @@ impl AlpacaExecutionClient {
         Ok(orders)
     }
 
-    // =============================================================================================
+    // 
     // Reports Generation
-    // =============================================================================================
+    // 
 
     /// Generates an order status report for a specific order.
     ///
@@ -509,9 +509,9 @@ impl AlpacaExecutionClient {
         Ok(reports)
     }
 
-    // =============================================================================================
+    // 
     // Account Queries
-    // =============================================================================================
+    // 
 
     /// Gets the current account state.
     pub fn account_state(&self) -> Option<&AlpacaAccountState> {
@@ -670,8 +670,10 @@ pub struct ShortabilityInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
-    #[test]
+
+    #[rstest]
     fn test_execution_client_creation() {
         let config = AlpacaExecClientConfig {
             api_key: "test_key".to_string(),

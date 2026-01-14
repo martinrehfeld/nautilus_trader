@@ -74,8 +74,10 @@ pub fn get_ws_data_url(asset_class: AlpacaAssetClass, data_feed: AlpacaDataFeed)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
-    #[test]
+
+    #[rstest]
     fn test_trading_url_live() {
         assert_eq!(
             get_http_base_url(AlpacaEnvironment::Live),
@@ -83,7 +85,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[rstest]
     fn test_trading_url_paper() {
         assert_eq!(
             get_http_base_url(AlpacaEnvironment::Paper),
@@ -91,7 +93,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[rstest]
     fn test_ws_trading_url_live() {
         assert_eq!(
             get_ws_trading_url(AlpacaEnvironment::Live),
@@ -99,7 +101,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[rstest]
     fn test_ws_trading_url_paper() {
         assert_eq!(
             get_ws_trading_url(AlpacaEnvironment::Paper),
@@ -107,7 +109,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[rstest]
     fn test_ws_data_url_stocks_iex() {
         assert_eq!(
             get_ws_data_url(AlpacaAssetClass::UsEquity, AlpacaDataFeed::Iex),
@@ -115,7 +117,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[rstest]
     fn test_ws_data_url_stocks_sip() {
         assert_eq!(
             get_ws_data_url(AlpacaAssetClass::UsEquity, AlpacaDataFeed::Sip),
@@ -123,7 +125,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[rstest]
     fn test_ws_data_url_crypto() {
         assert_eq!(
             get_ws_data_url(AlpacaAssetClass::Crypto, AlpacaDataFeed::Iex),
@@ -131,7 +133,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[rstest]
     fn test_ws_data_url_options() {
         assert_eq!(
             get_ws_data_url(AlpacaAssetClass::Option, AlpacaDataFeed::Iex),

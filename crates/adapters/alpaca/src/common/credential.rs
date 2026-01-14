@@ -75,21 +75,23 @@ impl fmt::Debug for AlpacaCredential {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
-    #[test]
+
+    #[rstest]
     fn test_credential_creation() {
         let cred = AlpacaCredential::new("test_key", "test_secret");
         assert_eq!(cred.api_key(), "test_key");
         assert_eq!(cred.api_secret(), "test_secret");
     }
 
-    #[test]
+    #[rstest]
     fn test_header_names() {
         assert_eq!(AlpacaCredential::api_key_header(), "APCA-API-KEY-ID");
         assert_eq!(AlpacaCredential::api_secret_header(), "APCA-API-SECRET-KEY");
     }
 
-    #[test]
+    #[rstest]
     fn test_debug_redaction() {
         let cred = AlpacaCredential::new("secret_key", "secret_value");
         let debug_str = format!("{cred:?}");

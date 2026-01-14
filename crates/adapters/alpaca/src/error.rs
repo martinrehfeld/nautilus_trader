@@ -211,8 +211,10 @@ impl From<crate::http::error::AlpacaHttpError> for AlpacaError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
-    #[test]
+
+    #[rstest]
     fn test_api_error_display() {
         let error = AlpacaApiError {
             code: 40010001,
@@ -224,14 +226,14 @@ mod tests {
         );
     }
 
-    #[test]
+    #[rstest]
     fn test_error_creation() {
         let error = AlpacaError::api(400, "Bad request");
         assert!(matches!(error, AlpacaError::Api(_)));
         assert!(error.to_string().contains("Bad request"));
     }
 
-    #[test]
+    #[rstest]
     fn test_http_error() {
         let error = AlpacaError::http("Connection refused");
         assert!(matches!(error, AlpacaError::Http(_)));
