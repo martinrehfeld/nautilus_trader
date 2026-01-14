@@ -171,7 +171,7 @@ impl AlpacaOrderBuilder {
         // Crypto only supports: market, limit, stop_limit
         let order_type = match order_type {
             "stop" | "trailing_stop" => {
-                tracing::warn!(
+                log::warn!(
                     "Crypto orders do not support {}, defaulting to market",
                     order_type
                 );
@@ -184,7 +184,7 @@ impl AlpacaOrderBuilder {
         let time_in_force = match time_in_force {
             "gtc" | "ioc" => time_in_force,
             _ => {
-                tracing::warn!(
+                log::warn!(
                     "Crypto orders only support GTC or IOC, was {}, defaulting to GTC",
                     time_in_force
                 );
@@ -194,7 +194,7 @@ impl AlpacaOrderBuilder {
 
         // Crypto doesn't support shorting - warn if selling
         if matches!(self.order.order_side(), OrderSide::Sell) {
-            tracing::debug!("Crypto sell order - ensure position exists (no shorting allowed)");
+            log::debug!("Crypto sell order - ensure position exists (no shorting allowed)");
         }
 
         // Convert symbol format for crypto (BTC/USD -> BTCUSD)
@@ -212,7 +212,7 @@ impl AlpacaOrderBuilder {
         // Options only support: market, limit
         let order_type = match order_type {
             "stop" | "stop_limit" | "trailing_stop" => {
-                tracing::warn!(
+                log::warn!(
                     "Options orders do not support {}, defaulting to market",
                     order_type
                 );
@@ -223,7 +223,7 @@ impl AlpacaOrderBuilder {
 
         // Options only support day orders
         let time_in_force = if time_in_force != "day" {
-            tracing::warn!(
+            log::warn!(
                 "Options only support DAY time-in-force, was {}, defaulting to DAY",
                 time_in_force
             );
@@ -349,7 +349,7 @@ impl MultiLegOrderBuilder {
         let order_type = match self.order_type.as_str() {
             "market" | "limit" => self.order_type.clone(),
             _ => {
-                tracing::warn!(
+                log::warn!(
                     "Multi-leg orders only support market or limit, was {}, defaulting to market",
                     self.order_type
                 );

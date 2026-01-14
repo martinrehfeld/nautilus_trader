@@ -63,7 +63,7 @@ strum = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-tungstenite = { workspace = true }
-tracing = { workspace = true }
+log = { workspace = true }
 ustr = { workspace = true }
 
 pyo3 = { workspace = true, optional = true }
@@ -74,4 +74,3 @@ nautilus-testkit = { workspace = true }
 
 rstest = { workspace = true }
 rust_decimal_macros = { workspace = true }
-tracing-test = { workspace = true }

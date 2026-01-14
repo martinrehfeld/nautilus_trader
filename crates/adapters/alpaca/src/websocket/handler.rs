@@ -267,7 +267,7 @@ impl AlpacaMessageHandler {
         // Check for authentication success
         if msg.msg.to_lowercase().contains("authenticated") {
             self.is_authenticated = true;
-            tracing::info!("Successfully authenticated");
+            log::info!("Successfully authenticated");
         }
 
         Ok(msg)
@@ -284,7 +284,7 @@ impl AlpacaMessageHandler {
     /// Returns an error if the message cannot be parsed
     pub fn handle_error(&self, raw: &[u8]) -> anyhow::Result<AlpacaErrorMessage> {
         let msg: AlpacaErrorMessage = serde_json::from_slice(raw)?;
-        tracing::error!("WebSocket error (code {}): {}", msg.code, msg.msg);
+        log::error!("WebSocket error (code {}): {}", msg.code, msg.msg);
         Ok(msg)
     }
 
@@ -314,7 +314,7 @@ impl AlpacaMessageHandler {
             self.subscribed_bars.insert(symbol.clone());
         }
 
-        tracing::info!(
+        log::info!(
             "Subscription confirmed - trades: {:?}, quotes: {:?}, bars: {:?}",
             msg.trades,
             msg.quotes,
@@ -358,7 +358,7 @@ impl AlpacaMessageHandler {
                 Ok(Some(raw.to_vec()))
             }
             AlpacaMessageType::Unknown => {
-                tracing::warn!("Unknown message type, forwarding to handler");
+                log::warn!("Unknown message type, forwarding to handler");
                 Ok(Some(raw.to_vec()))
             }
         }
