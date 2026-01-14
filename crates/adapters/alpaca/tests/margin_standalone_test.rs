@@ -1,12 +1,8 @@
 // Standalone test to verify margin module compiles and works
-use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 
 // Import just what we need from the margin module
-use nautilus_alpaca::margin::{
-    AlpacaOptionsMarginCalculator, CostBasisResult, MarginValidationResult, OptionPosition,
-    OrderLeg,
-};
+use nautilus_alpaca::margin::{AlpacaOptionsMarginCalculator, OptionPosition, OrderLeg};
 
 #[test]
 fn test_margin_calculator_basic() {

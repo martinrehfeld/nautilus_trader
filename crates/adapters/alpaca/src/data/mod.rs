@@ -66,7 +66,7 @@ pub struct AlpacaDataClient {
     /// WebSocket clients (one per asset class).
     ws_clients: Arc<RwLock<HashMap<AlpacaAssetClass, AlpacaWebSocketClient>>>,
     /// Data feed configuration.
-    data_feed: AlpacaDataFeed,
+    _data_feed: AlpacaDataFeed,
     /// Subscription state tracking.
     subscriptions: Arc<RwLock<SubscriptionState>>,
     /// Instrument cache.
@@ -119,7 +119,7 @@ impl AlpacaDataClient {
         Ok(Self {
             http_client,
             ws_clients: Arc::new(RwLock::new(ws_clients)),
-            data_feed: config.data_feed,
+            _data_feed: config.data_feed,
             subscriptions: Arc::new(RwLock::new(SubscriptionState::new())),
             cache,
         })
@@ -795,7 +795,5 @@ impl AlpacaDataClient {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     // Tests would go here - need to mock HTTP client and cache
 }

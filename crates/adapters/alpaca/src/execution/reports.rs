@@ -99,19 +99,19 @@ pub fn parse_order_status_report(
     let filled_qty = Quantity::from(order.filled_qty.as_str());
 
     // Parse average fill price
-    let avg_px = order
+    let _avg_px = order
         .filled_avg_price
         .as_ref()
         .and_then(|p| Decimal::from_str_exact(p).ok());
 
     // Parse limit price
-    let price = order
+    let _price = order
         .limit_price
         .as_ref()
         .and_then(|p| p.parse::<Price>().ok());
 
     // Parse stop price
-    let trigger_price = order
+    let _trigger_price = order
         .stop_price
         .as_ref()
         .and_then(|p| p.parse::<Price>().ok());
@@ -300,7 +300,6 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use nautilus_model::identifiers::Venue;
 
     #[rstest]
     fn test_parse_timestamp() {
@@ -321,8 +320,8 @@ mod tests {
             ("expired", OrderStatus::Expired),
         ];
 
-        for (alpaca_status, expected) in statuses {
-            let order = AlpacaOrder {
+        for (alpaca_status, _expected) in statuses {
+            let _order = AlpacaOrder {
                 id: "test".to_string(),
                 client_order_id: "test".to_string(),
                 created_at: "2024-01-15T10:30:00Z".to_string(),
