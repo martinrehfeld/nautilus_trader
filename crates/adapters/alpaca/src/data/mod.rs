@@ -157,7 +157,7 @@ impl AlpacaDataClient {
 
         // Subscribe to trades
         let ws_clients = self.ws_clients.read().await;
-        if let Some(ws_client) = ws_clients.get(&asset_class) {
+        if let Some(_ws_client) = ws_clients.get(&asset_class) {
             let msg = AlpacaWebSocketClient::subscribe_trades_message(vec![symbol.to_string()]);
             // TODO: Send message via WebSocket (needs integration with WebSocket client)
             debug!("Subscribe trades message: {}", msg);
@@ -198,7 +198,7 @@ impl AlpacaDataClient {
 
         // Subscribe to quotes
         let ws_clients = self.ws_clients.read().await;
-        if let Some(ws_client) = ws_clients.get(&asset_class) {
+        if let Some(_ws_client) = ws_clients.get(&asset_class) {
             let msg = AlpacaWebSocketClient::subscribe_quotes_message(vec![symbol.to_string()]);
             // TODO: Send message via WebSocket (needs integration with WebSocket client)
             debug!("Subscribe quotes message: {}", msg);
@@ -248,7 +248,7 @@ impl AlpacaDataClient {
 
         // Subscribe to bars
         let ws_clients = self.ws_clients.read().await;
-        if let Some(ws_client) = ws_clients.get(&asset_class) {
+        if let Some(_ws_client) = ws_clients.get(&asset_class) {
             let msg = AlpacaWebSocketClient::subscribe_bars_message(vec![symbol.to_string()]);
             // TODO: Send message via WebSocket (needs integration with WebSocket client)
             debug!("Subscribe bars message: {}", msg);
@@ -276,7 +276,7 @@ impl AlpacaDataClient {
         };
 
         let ws_clients = self.ws_clients.read().await;
-        if let Some(ws_client) = ws_clients.get(&asset_class) {
+        if let Some(_ws_client) = ws_clients.get(&asset_class) {
             let msg = AlpacaWebSocketClient::unsubscribe_trades_message(vec![symbol.to_string()]);
             // TODO: Send message via WebSocket (needs integration with WebSocket client)
             debug!("Unsubscribe trades message: {}", msg);
@@ -304,7 +304,7 @@ impl AlpacaDataClient {
         };
 
         let ws_clients = self.ws_clients.read().await;
-        if let Some(ws_client) = ws_clients.get(&asset_class) {
+        if let Some(_ws_client) = ws_clients.get(&asset_class) {
             let msg = AlpacaWebSocketClient::unsubscribe_quotes_message(vec![symbol.to_string()]);
             // TODO: Send message via WebSocket (needs integration with WebSocket client)
             debug!("Unsubscribe quotes message: {}", msg);
@@ -333,7 +333,7 @@ impl AlpacaDataClient {
         };
 
         let ws_clients = self.ws_clients.read().await;
-        if let Some(ws_client) = ws_clients.get(&asset_class) {
+        if let Some(_ws_client) = ws_clients.get(&asset_class) {
             let msg = AlpacaWebSocketClient::unsubscribe_bars_message(vec![symbol.to_string()]);
             // TODO: Send message via WebSocket (needs integration with WebSocket client)
             debug!("Unsubscribe bars message: {}", msg);

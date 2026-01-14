@@ -29,7 +29,7 @@ use crate::margin::{
 
 /// Python wrapper for OptionPosition
 #[pyclass(module = "nautilus_trader.core.nautilus_pyo3.alpaca")]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct OptionPosition {
     inner: RustOptionPosition,
 }
@@ -100,7 +100,7 @@ impl OptionPosition {
 
 /// Python wrapper for OrderLeg
 #[pyclass(module = "nautilus_trader.core.nautilus_pyo3.alpaca")]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct OrderLeg {
     inner: RustOrderLeg,
 }
@@ -162,7 +162,7 @@ impl OrderLeg {
 
 /// Python wrapper for CostBasisResult
 #[pyclass(module = "nautilus_trader.core.nautilus_pyo3.alpaca")]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CostBasisResult {
     inner: RustCostBasisResult,
 }
@@ -196,7 +196,7 @@ impl CostBasisResult {
 
 /// Python wrapper for MarginValidationResult
 #[pyclass(module = "nautilus_trader.core.nautilus_pyo3.alpaca")]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MarginValidationResult {
     inner: RustMarginValidationResult,
 }
@@ -236,6 +236,7 @@ impl MarginValidationResult {
 /// 3. Finding the theoretical maximum loss across all evaluation points
 /// 4. Using that maximum loss as the maintenance margin requirement
 #[pyclass(module = "nautilus_trader.core.nautilus_pyo3.alpaca")]
+#[derive(Debug)]
 pub struct AlpacaOptionsMarginCalculator {
     inner: RustMarginCalculator,
 }

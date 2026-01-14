@@ -29,7 +29,7 @@ from nautilus_trader.model.instruments import CryptoFuture
 from nautilus_trader.model.instruments import CryptoPerpetual
 from nautilus_trader.model.instruments import CurrencyPair
 from nautilus_trader.model.instruments import Equity
-from nautilus_trader.model.instruments import OptionsContract
+from nautilus_trader.model.instruments import OptionContract
 from nautilus_trader.model.objects import Currency
 from nautilus_trader.model.objects import Money
 from nautilus_trader.model.objects import Price

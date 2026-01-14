@@ -495,7 +495,7 @@ mod tests {
 
         // Clear some subscriptions
         handler.clear_subscriptions(
-            Some(&[" AAPL".to_string()]),
+            Some(&["AAPL".to_string()]),
             None,
             Some(&["SPY".to_string()]),
         );

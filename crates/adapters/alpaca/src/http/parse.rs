@@ -90,8 +90,25 @@ pub fn parse_timestamp_millis(timestamp_str: &str) -> Result<u64, AlpacaHttpErro
 ///
 /// Parsed `Decimal` value
 pub fn parse_decimal(value: &str) -> Result<Decimal, AlpacaHttpError> {
-    Decimal::from_str(value)
-        .map_err(|e| AlpacaHttpError::ValidationError(format!("Invalid decimal: {e}")))
+    // Try parsing directly first
+    if let Ok(decimal) = Decimal::from_str(value) {
+        return Ok(decimal);
+    }
+
+    // If direct parsing fails, check for scientific notation
+    if value.contains('e') || value.contains('E') {
+        let float_value = value
+            .parse::<f64>()
+            .map_err(|e| AlpacaHttpError::ValidationError(format!("Invalid decimal: {e}")))?;
+
+        Decimal::try_from(float_value)
+            .map_err(|e| AlpacaHttpError::ValidationError(format!("Invalid decimal: {e}")))
+    } else {
+        Err(AlpacaHttpError::ValidationError(format!(
+            "Invalid decimal: {}",
+            value
+        )))
+    }
 }
 
 /// Parse an optional decimal string to `Option<Decimal>`.
@@ -233,7 +250,7 @@ mod tests {
     fn test_parse_timestamp_nanos() {
         let timestamp = "2023-08-25T14:30:00Z";
         let nanos = parse_timestamp_nanos(timestamp).unwrap();
-        assert_eq!(nanos, 1692974400000000000);
+        assert_eq!(nanos, 1692973800000000000);
     }
 
     #[rstest]
@@ -253,7 +270,7 @@ mod tests {
     fn test_parse_timestamp_millis() {
         let timestamp = "2023-08-25T14:30:00Z";
         let millis = parse_timestamp_millis(timestamp).unwrap();
-        assert_eq!(millis, 1692974400000);
+        assert_eq!(millis, 1692973800000);
     }
 
     #[rstest]
@@ -291,7 +308,7 @@ mod tests {
     fn test_parse_datetime_utc() {
         let timestamp = "2023-08-25T14:30:00Z";
         let dt = parse_datetime_utc(timestamp).unwrap();
-        assert_eq!(dt.timestamp(), 1692974400);
+        assert_eq!(dt.timestamp(), 1692973800);
     }
 
     #[rstest]
@@ -327,14 +344,14 @@ mod tests {
 
     #[rstest]
     fn test_format_timestamp_nanos() {
-        let nanos = 1692974400000000000_u64;
+        let nanos = 1692973800000000000_u64;
         let formatted = format_timestamp_nanos(nanos);
         assert_eq!(formatted, "2023-08-25T14:30:00+00:00");
     }
 
     #[rstest]
     fn test_format_timestamp_millis() {
-        let millis = 1692974400000_u64;
+        let millis = 1692973800000_u64;
         let formatted = format_timestamp_millis(millis);
         assert_eq!(formatted, "2023-08-25T14:30:00+00:00");
     }
