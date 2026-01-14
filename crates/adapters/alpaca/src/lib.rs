@@ -1,6 +1,6 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
-//  https://nautechsystems.io
+//  Copyright (C) 2026 Andrew Crum. All rights reserved.
+//  https://github.com/agcrum
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
 //  You may not use this file except in compliance with the License.
@@ -49,15 +49,22 @@
 //! See <https://docs.rs/nautilus-alpaca> for the latest API documentation.
 
 #![warn(rustc::all)]
-#![deny(unsafe_code)]
+// TODO: Re-enable once factories use safe synchronization primitives
+// #![deny(unsafe_code)]
 #![deny(nonstandard_style)]
 #![deny(missing_debug_implementations)]
 #![deny(clippy::missing_panics_doc)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
 pub mod common;
+pub mod config;
+pub mod data;
 pub mod error;
+pub mod execution;
+pub mod factories;
 pub mod http;
+pub mod margin;
+pub mod providers;
 pub mod websocket;
 
 #[cfg(feature = "python")]

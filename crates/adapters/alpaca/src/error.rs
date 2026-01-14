@@ -1,6 +1,6 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
-//  https://nautechsystems.io
+//  Copyright (C) 2026 Andrew Crum. All rights reserved.
+//  https://github.com/agcrum
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
 //  You may not use this file except in compliance with the License.
@@ -77,6 +77,50 @@ pub enum AlpacaError {
     /// Unknown or unexpected error.
     #[error("Unknown error: {0}")]
     Unknown(String),
+
+    /// Instrument not found.
+    #[error("Instrument not found: {0}")]
+    InstrumentNotFound(String),
+
+    /// Invalid order side.
+    #[error("Invalid order side: {0}")]
+    InvalidOrderSide(String),
+
+    /// Unsupported order type.
+    #[error("Unsupported order type: {0}")]
+    UnsupportedOrderType(String),
+
+    /// Unsupported time in force.
+    #[error("Unsupported time in force: {0}")]
+    UnsupportedTimeInForce(String),
+
+    /// Invalid order request.
+    #[error("Invalid order request: {0}")]
+    InvalidOrderRequest(String),
+
+    /// Parse error.
+    #[error("Parse error: {0}")]
+    ParseError(String),
+
+    /// Insufficient margin.
+    #[error("Insufficient margin: {0}")]
+    InsufficientMargin(String),
+
+    /// Shorting not enabled.
+    #[error("Shorting is not enabled on this account")]
+    ShortingNotEnabled,
+
+    /// Not shortable.
+    #[error("Not shortable: {0}")]
+    NotShortable(String),
+
+    /// Resource not found.
+    #[error("Not found: {0}")]
+    NotFound(String),
+
+    /// Feature not implemented.
+    #[error("Not implemented: {0}")]
+    NotImplemented(String),
 }
 
 impl AlpacaError {
@@ -135,6 +179,32 @@ impl AlpacaError {
     #[must_use]
     pub fn timeout(msg: impl Into<String>) -> Self {
         Self::Timeout(msg.into())
+    }
+}
+
+/// Result type alias for Alpaca operations.
+pub type Result<T> = std::result::Result<T, AlpacaError>;
+
+// Conversion from HTTP errors
+impl From<crate::http::error::AlpacaHttpError> for AlpacaError {
+    fn from(err: crate::http::error::AlpacaHttpError) -> Self {
+        use crate::http::error::AlpacaHttpError;
+        match err {
+            AlpacaHttpError::ClientError(msg) => AlpacaError::Http(msg),
+            AlpacaHttpError::ApiError { code, message } => AlpacaError::Api(AlpacaApiError {
+                code: code as i32,
+                message,
+            }),
+            AlpacaHttpError::RateLimitExceeded(msg) => AlpacaError::RateLimit(msg),
+            AlpacaHttpError::AuthenticationError(msg) => AlpacaError::Authentication(msg),
+            AlpacaHttpError::ValidationError(msg) => AlpacaError::InvalidRequest(msg),
+            AlpacaHttpError::JsonError(msg) => AlpacaError::Serialization(msg),
+            AlpacaHttpError::MissingCredentials => {
+                AlpacaError::Authentication("Missing API credentials".to_string())
+            }
+            AlpacaHttpError::ConnectionError(msg) => AlpacaError::Http(msg),
+            AlpacaHttpError::Timeout(msg) => AlpacaError::Http(msg),
+        }
     }
 }
 

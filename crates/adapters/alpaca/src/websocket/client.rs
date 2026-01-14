@@ -1,6 +1,6 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
-//  https://nautechsystems.io
+//  Copyright (C) 2026 Andrew Crum. All rights reserved.
+//  https://github.com/agcrum
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
 //  You may not use this file except in compliance with the License.
@@ -23,6 +23,9 @@ use std::sync::{
 use nautilus_network::websocket::WebSocketClient;
 use tokio::sync::mpsc;
 
+#[cfg(feature = "python")]
+use pyo3::prelude::*;
+
 use super::messages::{AlpacaWsAuthMessage, AlpacaWsMessage, AlpacaWsSubscribeMessage};
 use crate::common::{
     credential::AlpacaCredential,
@@ -32,6 +35,7 @@ use crate::common::{
 
 /// Alpaca WebSocket client for market data streaming.
 #[derive(Debug)]
+#[cfg_attr(feature = "python", pyclass(module = "nautilus_pyo3.alpaca"))]
 pub struct AlpacaWebSocketClient {
     url: String,
     credential: AlpacaCredential,

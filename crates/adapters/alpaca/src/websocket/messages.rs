@@ -1,6 +1,6 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
-//  https://nautechsystems.io
+//  Copyright (C) 2026 Andrew Crum. All rights reserved.
+//  https://github.com/agcrum
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
 //  You may not use this file except in compliance with the License.

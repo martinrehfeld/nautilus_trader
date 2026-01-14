@@ -4775,6 +4775,7 @@ dependencies = [
  "pyo3-async-runtimes",
  "rstest",
  "rust_decimal",
+ "rust_decimal_macros",
  "serde",
  "serde_json",
  "serde_urlencoded",

@@ -20,37 +20,70 @@ This adapter provides integration with Alpaca Markets for:
 - Cryptocurrency trading
 - Options trading
 
-API Documentation: https://docs.alpaca.markets/
+This module provides thin Python wrappers over the Rust implementation
+for backward compatibility with existing examples and user code.
 
+API Documentation: https://docs.alpaca.markets/
 """
 
-from nautilus_trader.adapters.alpaca.common.constants import ALPACA_VENUE
-from nautilus_trader.adapters.alpaca.common.enums import AlpacaAssetClass
-from nautilus_trader.adapters.alpaca.common.enums import AlpacaDataFeed
-from nautilus_trader.adapters.alpaca.config import AlpacaDataClientConfig
-from nautilus_trader.adapters.alpaca.config import AlpacaExecClientConfig
-from nautilus_trader.adapters.alpaca.config import AlpacaInstrumentProviderConfig
-from nautilus_trader.adapters.alpaca.data import AlpacaDataClient
-from nautilus_trader.adapters.alpaca.execution import AlpacaExecutionClient
+from __future__ import annotations
+
+try:
+    # Import from Rust PyO3 module
+    from nautilus_trader.core.nautilus_pyo3.alpaca import ALPACA_VENUE
+    from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaAssetClass
+    from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaDataClient
+    from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaDataClientConfig
+    from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaDataFeed
+    from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaExecClientConfig
+    from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaExecutionClient
+    from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaHttpClient
+    from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaInstrumentProvider
+    from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaInstrumentProviderConfig
+    from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaOptionsMarginCalculator
+except ImportError:
+    # Fallback: Try importing from nautilus_pyo3 directly (alternative module structure)
+    try:
+        from nautilus_pyo3.alpaca import ALPACA_VENUE
+        from nautilus_pyo3.alpaca import AlpacaAssetClass
+        from nautilus_pyo3.alpaca import AlpacaDataClient
+        from nautilus_pyo3.alpaca import AlpacaDataClientConfig
+        from nautilus_pyo3.alpaca import AlpacaDataFeed
+        from nautilus_pyo3.alpaca import AlpacaExecClientConfig
+        from nautilus_pyo3.alpaca import AlpacaExecutionClient
+        from nautilus_pyo3.alpaca import AlpacaHttpClient
+        from nautilus_pyo3.alpaca import AlpacaInstrumentProvider
+        from nautilus_pyo3.alpaca import AlpacaInstrumentProviderConfig
+        from nautilus_pyo3.alpaca import AlpacaOptionsMarginCalculator
+    except ImportError as e:
+        # Provide helpful error message if Rust module not built
+        raise ImportError(
+            "Alpaca adapter Rust module not found. "
+            "Please ensure the Rust extension is built with: uv build"
+        ) from e
+
+# Import factories from Python module
 from nautilus_trader.adapters.alpaca.factories import AlpacaLiveDataClientFactory
 from nautilus_trader.adapters.alpaca.factories import AlpacaLiveExecClientFactory
-from nautilus_trader.adapters.alpaca.http.client import AlpacaHttpClient
-from nautilus_trader.adapters.alpaca.margin import AlpacaOptionsMarginCalculator
-from nautilus_trader.adapters.alpaca.providers import AlpacaInstrumentProvider
 
 
 __all__ = [
+    # Constants and enums
     "ALPACA_VENUE",
     "AlpacaAssetClass",
-    "AlpacaDataClient",
-    "AlpacaDataClientConfig",
     "AlpacaDataFeed",
+    # Config classes
+    "AlpacaDataClientConfig",
     "AlpacaExecClientConfig",
+    "AlpacaInstrumentProviderConfig",
+    # Client classes
+    "AlpacaDataClient",
     "AlpacaExecutionClient",
     "AlpacaHttpClient",
     "AlpacaInstrumentProvider",
-    "AlpacaInstrumentProviderConfig",
+    # Factories
     "AlpacaLiveDataClientFactory",
     "AlpacaLiveExecClientFactory",
+    # Utilities
     "AlpacaOptionsMarginCalculator",
 ]

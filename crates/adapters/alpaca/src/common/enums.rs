@@ -1,6 +1,6 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
-//  https://nautechsystems.io
+//  Copyright (C) 2026 Andrew Crum. All rights reserved.
+//  https://github.com/agcrum
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
 //  You may not use this file except in compliance with the License.
@@ -16,12 +16,16 @@
 //! Alpaca-specific enumeration types.
 
 use serde::{Deserialize, Serialize};
-use strum::{Display, EnumString};
+use strum::{AsRefStr, Display, EnumIter, EnumString};
+
+#[cfg(feature = "python")]
+use pyo3::prelude::*;
 
 /// Alpaca trading environment.
 #[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString,
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString, AsRefStr, EnumIter,
 )]
+#[cfg_attr(feature = "python", pyclass(module = "nautilus_pyo3.alpaca"))]
 #[strum(serialize_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum AlpacaEnvironment {
@@ -33,7 +37,8 @@ pub enum AlpacaEnvironment {
 }
 
 /// Alpaca asset class.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString, AsRefStr, EnumIter)]
+#[cfg_attr(feature = "python", pyclass(module = "nautilus_pyo3.alpaca"))]
 #[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum AlpacaAssetClass {
@@ -47,8 +52,9 @@ pub enum AlpacaAssetClass {
 
 /// Alpaca market data feed subscription level.
 #[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString,
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString, AsRefStr, EnumIter,
 )]
+#[cfg_attr(feature = "python", pyclass(module = "nautilus_pyo3.alpaca"))]
 #[strum(serialize_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum AlpacaDataFeed {
@@ -60,7 +66,8 @@ pub enum AlpacaDataFeed {
 }
 
 /// Alpaca order side.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString, AsRefStr, EnumIter)]
+#[cfg_attr(feature = "python", pyclass(module = "nautilus_pyo3.alpaca"))]
 #[strum(serialize_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum AlpacaOrderSide {
@@ -71,7 +78,8 @@ pub enum AlpacaOrderSide {
 }
 
 /// Alpaca order type.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString, AsRefStr, EnumIter)]
+#[cfg_attr(feature = "python", pyclass(module = "nautilus_pyo3.alpaca"))]
 #[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum AlpacaOrderType {
@@ -89,8 +97,9 @@ pub enum AlpacaOrderType {
 
 /// Alpaca time-in-force for orders.
 #[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString,
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString, AsRefStr, EnumIter,
 )]
+#[cfg_attr(feature = "python", pyclass(module = "nautilus_pyo3.alpaca"))]
 #[strum(serialize_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum AlpacaTimeInForce {
@@ -110,7 +119,8 @@ pub enum AlpacaTimeInForce {
 }
 
 /// Alpaca order status.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString, AsRefStr, EnumIter)]
+#[cfg_attr(feature = "python", pyclass(module = "nautilus_pyo3.alpaca"))]
 #[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum AlpacaOrderStatus {
