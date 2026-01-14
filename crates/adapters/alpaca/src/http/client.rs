@@ -366,7 +366,7 @@ impl AlpacaHttpClient {
         activity_types: Option<&str>,
         after: Option<&str>,
         until: Option<&str>,
-        direction: Option<&str>,
+        _direction: Option<&str>,
         page_size: Option<u32>,
     ) -> AlpacaHttpResult<Vec<AlpacaActivity>> {
         self.get_activities(activity_types, after, until, page_size)

@@ -79,7 +79,7 @@ pub struct AlpacaExecClientConfig {
 #[derive(Debug)]
 pub struct AlpacaExecutionClient {
     /// Client ID.
-    client_id: ClientId,
+    _client_id: ClientId,
     /// Account ID.
     account_id: AccountId,
     /// HTTP client.
@@ -89,7 +89,7 @@ pub struct AlpacaExecutionClient {
     /// Instrument cache (instrument_id -> instrument).
     instruments: HashMap<InstrumentId, InstrumentAny>,
     /// Configuration.
-    config: AlpacaExecClientConfig,
+    _config: AlpacaExecClientConfig,
 }
 
 impl AlpacaExecutionClient {
@@ -114,12 +114,12 @@ impl AlpacaExecutionClient {
         info!("Environment: {:?}", config.environment);
 
         Ok(Self {
-            client_id,
+            _client_id: client_id,
             account_id,
             http_client,
             account_state: None,
             instruments: HashMap::new(),
-            config,
+            _config: config,
         })
     }
 
@@ -453,8 +453,8 @@ impl AlpacaExecutionClient {
                     reports.push(report);
 
                     // Update account state
-                    if let Some(ref mut account_state) = self.account_state.as_ref() {
-                        let pos_state = PositionState::from_alpaca_position(&position, instrument_id);
+                    if let Some(ref mut _account_state) = self.account_state.as_ref() {
+                        let _pos_state = PositionState::from_alpaca_position(&position, instrument_id);
                         // Note: Can't mutate here, would need interior mutability
                         // This is a simplification for the migration
                     }
@@ -599,7 +599,7 @@ impl AlpacaExecutionClient {
     pub async fn validate_short_order(
         &self,
         symbol: &str,
-        quantity: Decimal,
+        _quantity: Decimal,
     ) -> Result<()> {
         // Check margin/shorting enabled
         let margin_info = self.get_margin_info().await?;
