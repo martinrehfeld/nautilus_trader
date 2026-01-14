@@ -477,8 +477,10 @@ impl AlpacaOptionsMarginCalculator {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use rstest::rstest;
     use rust_decimal_macros::dec;
+
+    use super::*;
 
     #[rstest]
     fn test_calculate_payoff_long_call() {
