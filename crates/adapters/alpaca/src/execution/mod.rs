@@ -31,7 +31,7 @@ use nautilus_model::{
     orders::{Order, OrderAny},
 };
 use rust_decimal::Decimal;
-use tracing::{debug, info, warn};
+use log::{debug, info, warn};
 
 use self::{
     account::{AlpacaAccountState, PositionState},
