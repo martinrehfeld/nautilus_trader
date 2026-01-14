@@ -22,7 +22,7 @@ use crate::{
     common::enums::AlpacaEnvironment,
     http::{
         client::AlpacaHttpClient,
-        models::{AlpacaAccount, AlpacaOrder, AlpacaOrderRequest, AlpacaPosition},
+        models::{AlpacaAccount, AlpacaAsset, AlpacaOrder, AlpacaOrderRequest, AlpacaPosition},
     },
 };
 
@@ -79,6 +79,69 @@ impl AlpacaHttpClient {
             Python::attach(|py| {
                 let py_account = Py::new(py, account)?;
                 Ok(py_account.into_any())
+            })
+        })
+    }
+
+    // ============================================================================
+    // Asset Endpoints
+    // ============================================================================
+
+    /// Get all assets.
+    ///
+    /// # Arguments
+    ///
+    /// * `status` - Filter by status (e.g., "active")
+    /// * `asset_class` - Filter by asset class (e.g., "us_equity", "crypto")
+    #[pyo3(name = "get_assets")]
+    #[pyo3(signature = (status=None, asset_class=None))]
+    fn py_get_assets<'py>(
+        &self,
+        py: Python<'py>,
+        status: Option<String>,
+        asset_class: Option<String>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let assets = client
+                .get_assets(status.as_deref(), asset_class.as_deref())
+                .await
+                .map_err(to_pyvalue_err)?;
+
+            Python::attach(|py| {
+                let py_assets: PyResult<Vec<_>> = assets
+                    .into_iter()
+                    .map(|asset| Py::new(py, asset))
+                    .collect();
+                let pylist = PyList::new(py, py_assets?).unwrap().into_any().unbind();
+                Ok(pylist)
+            })
+        })
+    }
+
+    /// Get a specific asset by symbol or asset ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `symbol_or_asset_id` - The symbol (e.g., "AAPL") or asset ID
+    #[pyo3(name = "get_asset")]
+    fn py_get_asset<'py>(
+        &self,
+        py: Python<'py>,
+        symbol_or_asset_id: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let asset = client
+                .get_asset(&symbol_or_asset_id)
+                .await
+                .map_err(to_pyvalue_err)?;
+
+            Python::attach(|py| {
+                let py_asset = Py::new(py, asset)?;
+                Ok(py_asset.into_any())
             })
         })
     }
@@ -601,5 +664,90 @@ impl AlpacaOrderRequest {
             "AlpacaOrderRequest(symbol='{}', side='{}', type='{}', qty={:?})",
             self.symbol, self.side, self.order_type, self.qty
         )
+    }
+}
+
+#[pymethods]
+impl AlpacaAsset {
+    fn __repr__(&self) -> String {
+        format!(
+            "AlpacaAsset(symbol='{}', name='{}', class='{}', status='{}')",
+            self.symbol, self.name, self.class, self.status
+        )
+    }
+
+    #[getter]
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    #[getter]
+    fn class(&self) -> &str {
+        &self.class
+    }
+
+    #[getter]
+    fn exchange(&self) -> &str {
+        &self.exchange
+    }
+
+    #[getter]
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    #[getter]
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[getter]
+    fn status(&self) -> &str {
+        &self.status
+    }
+
+    #[getter]
+    fn tradable(&self) -> bool {
+        self.tradable
+    }
+
+    #[getter]
+    fn marginable(&self) -> bool {
+        self.marginable
+    }
+
+    #[getter]
+    fn shortable(&self) -> bool {
+        self.shortable
+    }
+
+    #[getter]
+    fn easy_to_borrow(&self) -> bool {
+        self.easy_to_borrow
+    }
+
+    #[getter]
+    fn fractionable(&self) -> bool {
+        self.fractionable
+    }
+
+    #[getter]
+    fn maintenance_margin_requirement(&self) -> Option<f64> {
+        self.maintenance_margin_requirement
+    }
+
+    #[getter]
+    fn min_order_size(&self) -> Option<&str> {
+        self.min_order_size.as_deref()
+    }
+
+    #[getter]
+    fn min_trade_increment(&self) -> Option<&str> {
+        self.min_trade_increment.as_deref()
+    }
+
+    #[getter]
+    fn price_increment(&self) -> Option<&str> {
+        self.price_increment.as_deref()
     }
 }

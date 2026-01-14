@@ -29,25 +29,19 @@ API Documentation: https://docs.alpaca.markets/
 from __future__ import annotations
 
 try:
-    # Import Rust components (constants, enums, configs, HTTP client, margin calculator)
+    # Import Rust components (constants, enums, HTTP client, margin calculator)
     from nautilus_trader.core.nautilus_pyo3.alpaca import ALPACA_VENUE
     from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaAssetClass
-    from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaDataClientConfig
     from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaDataFeed
-    from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaExecClientConfig
     from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaHttpClient
-    from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaInstrumentProviderConfig
     from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaOptionsMarginCalculator
 except ImportError:
     # Fallback: Try importing from nautilus_pyo3 directly (alternative module structure)
     try:
         from nautilus_pyo3.alpaca import ALPACA_VENUE
         from nautilus_pyo3.alpaca import AlpacaAssetClass
-        from nautilus_pyo3.alpaca import AlpacaDataClientConfig
         from nautilus_pyo3.alpaca import AlpacaDataFeed
-        from nautilus_pyo3.alpaca import AlpacaExecClientConfig
         from nautilus_pyo3.alpaca import AlpacaHttpClient
-        from nautilus_pyo3.alpaca import AlpacaInstrumentProviderConfig
         from nautilus_pyo3.alpaca import AlpacaOptionsMarginCalculator
     except ImportError as e:
         # Provide helpful error message if Rust module not built
@@ -55,6 +49,11 @@ except ImportError:
             "Alpaca adapter Rust module not found. "
             "Please ensure the Rust extension is built with: uv build"
         ) from e
+
+# Import Python config classes (with routing support)
+from nautilus_trader.adapters.alpaca.config import AlpacaDataClientConfig
+from nautilus_trader.adapters.alpaca.config import AlpacaExecClientConfig
+from nautilus_trader.adapters.alpaca.config import AlpacaInstrumentProviderConfig
 
 # Import Python implementations (hybrid architecture)
 from nautilus_trader.adapters.alpaca.data import AlpacaDataClient

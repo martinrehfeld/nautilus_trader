@@ -1,6 +1,6 @@
 # -------------------------------------------------------------------------------------------------
-#  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
-#  https://nautechsystems.io
+#  Copyright (C) 2026 Andrew Crum. All rights reserved.
+#  https://github.com/agcrum
 #
 #  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
 #  You may not use this file except in compliance with the License.
@@ -51,6 +51,7 @@ from nautilus_trader.model.identifiers import ClientId
 from nautilus_trader.model.identifiers import ClientOrderId
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.identifiers import TradeId
+from nautilus_trader.model.identifiers import Venue
 from nautilus_trader.model.identifiers import VenueOrderId
 from nautilus_trader.model.objects import AccountBalance
 from nautilus_trader.model.objects import Currency
@@ -108,7 +109,7 @@ class AlpacaExecutionClient(LiveExecutionClient):
         super().__init__(
             loop=loop,
             client_id=ClientId(name or "ALPACA"),
-            venue=nautilus_pyo3.ALPACA_VENUE,
+            venue=Venue(str(config.venue)) if hasattr(config, 'venue') else Venue(nautilus_pyo3.ALPACA_VENUE),
             oms_type=OmsType.NETTING,
             account_type=AccountType.MARGIN if not config.paper_trading else AccountType.CASH,
             base_currency=Currency.from_str("USD"),
