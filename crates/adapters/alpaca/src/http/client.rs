@@ -1,6 +1,6 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
-//  https://nautechsystems.io
+//  Copyright (C) 2026 Andrew Crum. All rights reserved.
+//  https://github.com/agcrum
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
 //  You may not use this file except in compliance with the License.
@@ -23,7 +23,13 @@ use nautilus_network::{
 };
 use serde::{Serialize, de::DeserializeOwned};
 
-use super::error::{AlpacaHttpError, AlpacaHttpResult};
+#[cfg(feature = "python")]
+use pyo3::prelude::*;
+
+use super::{
+    error::{AlpacaHttpError, AlpacaHttpResult},
+    models::*,
+};
 use crate::common::{
     credential::AlpacaCredential,
     enums::AlpacaEnvironment,
@@ -40,6 +46,7 @@ const ALPACA_RATE_LIMIT_KEY: &str = "alpaca:trading";
 /// - Rate limiting (200 requests per minute for trading API).
 /// - Error deserialization for Alpaca error payloads.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "python", pyclass(module = "nautilus_pyo3.alpaca"))]
 pub struct AlpacaHttpClient {
     client: HttpClient,
     trading_base_url: String,
@@ -179,6 +186,493 @@ impl AlpacaHttpClient {
             .await
     }
 
+    // ============================================================================
+    // Trading API Endpoints
+    // ============================================================================
+
+    /// Get account details.
+    ///
+    /// Retrieves the current account information including buying power,
+    /// equity, cash, and account status.
+    pub async fn get_account(&self) -> AlpacaHttpResult<AlpacaAccount> {
+        self.get::<HashMap<String, String>, AlpacaAccount>("/v2/account", None)
+            .await
+    }
+
+    /// Get all positions.
+    ///
+    /// Retrieves all open positions for the account.
+    pub async fn get_positions(&self) -> AlpacaHttpResult<Vec<AlpacaPosition>> {
+        self.get::<HashMap<String, String>, Vec<AlpacaPosition>>("/v2/positions", None)
+            .await
+    }
+
+    /// Get a specific position by symbol or asset ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `symbol_or_asset_id` - The symbol (e.g., "AAPL") or asset ID
+    pub async fn get_position(&self, symbol_or_asset_id: &str) -> AlpacaHttpResult<AlpacaPosition> {
+        let path = format!("/v2/positions/{symbol_or_asset_id}");
+        self.get::<HashMap<String, String>, AlpacaPosition>(&path, None)
+            .await
+    }
+
+    /// Close a position.
+    ///
+    /// # Arguments
+    ///
+    /// * `symbol_or_asset_id` - The symbol or asset ID
+    /// * `qty` - Optional quantity to close (None closes entire position)
+    /// * `percentage` - Optional percentage to close
+    pub async fn close_position(
+        &self,
+        symbol_or_asset_id: &str,
+        qty: Option<&str>,
+        percentage: Option<&str>,
+    ) -> AlpacaHttpResult<AlpacaOrder> {
+        let path = format!("/v2/positions/{symbol_or_asset_id}");
+        let mut params: HashMap<String, String> = HashMap::new();
+        if let Some(q) = qty {
+            params.insert("qty".to_string(), q.to_string());
+        }
+        if let Some(p) = percentage {
+            params.insert("percentage".to_string(), p.to_string());
+        }
+        self.delete::<HashMap<String, String>, AlpacaOrder>(&path, Some(&params))
+            .await
+    }
+
+    /// Close all positions.
+    ///
+    /// # Arguments
+    ///
+    /// * `cancel_orders` - Whether to cancel all open orders before closing positions
+    pub async fn close_all_positions(
+        &self,
+        cancel_orders: bool,
+    ) -> AlpacaHttpResult<Vec<AlpacaOrder>> {
+        let mut params: HashMap<String, String> = HashMap::new();
+        params.insert("cancel_orders".to_string(), cancel_orders.to_string());
+        self.delete::<HashMap<String, String>, Vec<AlpacaOrder>>("/v2/positions", Some(&params))
+            .await
+    }
+
+    /// Submit a new order.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - Order request details
+    pub async fn submit_order(&self, request: &AlpacaOrderRequest) -> AlpacaHttpResult<AlpacaOrder> {
+        let body = serde_json::to_vec(request)
+            .map_err(|e| AlpacaHttpError::JsonError(e.to_string()))?;
+        self.post::<HashMap<String, String>, AlpacaOrder>("/v2/orders", None, Some(body))
+            .await
+    }
+
+    /// Get all orders.
+    ///
+    /// # Arguments
+    ///
+    /// * `status` - Filter by order status (e.g., "open", "closed", "all")
+    /// * `limit` - Maximum number of orders to return
+    /// * `after` - Return orders after this timestamp
+    /// * `until` - Return orders until this timestamp
+    /// * `nested` - If true, roll up multi-leg orders
+    pub async fn get_orders(
+        &self,
+        status: Option<&str>,
+        limit: Option<u32>,
+        after: Option<&str>,
+        until: Option<&str>,
+        nested: Option<bool>,
+    ) -> AlpacaHttpResult<Vec<AlpacaOrder>> {
+        let mut params: HashMap<String, String> = HashMap::new();
+        if let Some(s) = status {
+            params.insert("status".to_string(), s.to_string());
+        }
+        if let Some(l) = limit {
+            params.insert("limit".to_string(), l.to_string());
+        }
+        if let Some(a) = after {
+            params.insert("after".to_string(), a.to_string());
+        }
+        if let Some(u) = until {
+            params.insert("until".to_string(), u.to_string());
+        }
+        if let Some(n) = nested {
+            params.insert("nested".to_string(), n.to_string());
+        }
+        self.get::<HashMap<String, String>, Vec<AlpacaOrder>>("/v2/orders", Some(&params))
+            .await
+    }
+
+    /// Get a specific order by ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `order_id` - The order ID
+    /// * `nested` - If true, roll up multi-leg orders
+    pub async fn get_order(&self, order_id: &str, nested: Option<bool>) -> AlpacaHttpResult<AlpacaOrder> {
+        let path = format!("/v2/orders/{order_id}");
+        let mut params: HashMap<String, String> = HashMap::new();
+        if let Some(n) = nested {
+            params.insert("nested".to_string(), n.to_string());
+        }
+        self.get::<HashMap<String, String>, AlpacaOrder>(&path, Some(&params))
+            .await
+    }
+
+    /// Cancel an order by ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `order_id` - The order ID to cancel
+    pub async fn cancel_order(&self, order_id: &str) -> AlpacaHttpResult<()> {
+        let path = format!("/v2/orders/{order_id}");
+        self.delete::<HashMap<String, String>, ()>(&path, None)
+            .await
+    }
+
+    /// Cancel all open orders.
+    pub async fn cancel_all_orders(&self) -> AlpacaHttpResult<Vec<AlpacaCancelStatus>> {
+        self.delete::<HashMap<String, String>, Vec<AlpacaCancelStatus>>("/v2/orders", None)
+            .await
+    }
+
+    /// Cancel an order by client order ID.
+    pub async fn cancel_order_by_client_id(&self, client_order_id: &str) -> AlpacaHttpResult<()> {
+        let path = format!("/v2/orders:by_client_order_id?client_order_id={client_order_id}");
+        self.delete::<HashMap<String, String>, ()>(&path, None)
+            .await
+    }
+
+    /// Modify an existing order.
+    pub async fn modify_order(
+        &self,
+        order_id: &str,
+        body: &serde_json::Map<String, serde_json::Value>,
+    ) -> AlpacaHttpResult<AlpacaOrder> {
+        let path = format!("/v2/orders/{order_id}");
+        let body_bytes = serde_json::to_vec(body)
+            .map_err(|e| AlpacaHttpError::JsonError(e.to_string()))?;
+        self.patch::<HashMap<String, String>, AlpacaOrder>(&path, None, Some(body_bytes))
+            .await
+    }
+
+    /// Get account activities (alias for get_activities).
+    pub async fn get_account_activities(
+        &self,
+        activity_types: Option<&str>,
+        after: Option<&str>,
+        until: Option<&str>,
+        direction: Option<&str>,
+        page_size: Option<u32>,
+    ) -> AlpacaHttpResult<Vec<AlpacaActivity>> {
+        self.get_activities(activity_types, after, until, page_size)
+            .await
+    }
+
+    /// Get account activities.
+    ///
+    /// # Arguments
+    ///
+    /// * `activity_types` - Optional comma-separated list of activity types
+    /// * `after` - Return activities after this timestamp
+    /// * `until` - Return activities until this timestamp
+    /// * `page_size` - Number of activities per page
+    pub async fn get_activities(
+        &self,
+        activity_types: Option<&str>,
+        after: Option<&str>,
+        until: Option<&str>,
+        page_size: Option<u32>,
+    ) -> AlpacaHttpResult<Vec<AlpacaActivity>> {
+        let mut params: HashMap<String, String> = HashMap::new();
+        if let Some(types) = activity_types {
+            params.insert("activity_types".to_string(), types.to_string());
+        }
+        if let Some(a) = after {
+            params.insert("after".to_string(), a.to_string());
+        }
+        if let Some(u) = until {
+            params.insert("until".to_string(), u.to_string());
+        }
+        if let Some(size) = page_size {
+            params.insert("page_size".to_string(), size.to_string());
+        }
+        self.get::<HashMap<String, String>, Vec<AlpacaActivity>>("/v2/account/activities", Some(&params))
+            .await
+    }
+
+    // ============================================================================
+    // Asset API Endpoints
+    // ============================================================================
+
+    /// Get all assets.
+    ///
+    /// # Arguments
+    ///
+    /// * `status` - Filter by asset status ("active" or "inactive")
+    /// * `asset_class` - Filter by asset class (e.g., "us_equity", "crypto")
+    pub async fn get_assets(
+        &self,
+        status: Option<&str>,
+        asset_class: Option<&str>,
+    ) -> AlpacaHttpResult<Vec<AlpacaAsset>> {
+        let mut params: HashMap<String, String> = HashMap::new();
+        if let Some(s) = status {
+            params.insert("status".to_string(), s.to_string());
+        }
+        if let Some(c) = asset_class {
+            params.insert("asset_class".to_string(), c.to_string());
+        }
+        self.get::<HashMap<String, String>, Vec<AlpacaAsset>>("/v2/assets", Some(&params))
+            .await
+    }
+
+    /// Get a specific asset by symbol or ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `symbol_or_asset_id` - The asset symbol or ID
+    pub async fn get_asset(&self, symbol_or_asset_id: &str) -> AlpacaHttpResult<AlpacaAsset> {
+        let path = format!("/v2/assets/{symbol_or_asset_id}");
+        self.get::<HashMap<String, String>, AlpacaAsset>(&path, None)
+            .await
+    }
+
+    // ============================================================================
+    // Options API Endpoints
+    // ============================================================================
+
+    /// Get option contracts.
+    ///
+    /// # Arguments
+    ///
+    /// * `underlying_symbols` - Comma-separated list of underlying symbols
+    /// * `status` - Filter by contract status
+    /// * `expiration_date` - Filter by specific expiration date (YYYY-MM-DD)
+    /// * `expiration_date_gte` - Filter by expiration date greater than or equal to
+    /// * `expiration_date_lte` - Filter by expiration date less than or equal to
+    /// * `strike_price_gte` - Filter by strike price greater than or equal to
+    /// * `strike_price_lte` - Filter by strike price less than or equal to
+    /// * `contract_type` - Filter by contract type ("call" or "put")
+    pub async fn get_option_contracts(
+        &self,
+        underlying_symbols: Option<&str>,
+        status: Option<&str>,
+        expiration_date: Option<&str>,
+        expiration_date_gte: Option<&str>,
+        expiration_date_lte: Option<&str>,
+        strike_price_gte: Option<&str>,
+        strike_price_lte: Option<&str>,
+        contract_type: Option<&str>,
+    ) -> AlpacaHttpResult<AlpacaOptionContractsResponse> {
+        let mut params: HashMap<String, String> = HashMap::new();
+        if let Some(s) = underlying_symbols {
+            params.insert("underlying_symbols".to_string(), s.to_string());
+        }
+        if let Some(s) = status {
+            params.insert("status".to_string(), s.to_string());
+        }
+        if let Some(d) = expiration_date {
+            params.insert("expiration_date".to_string(), d.to_string());
+        }
+        if let Some(d) = expiration_date_gte {
+            params.insert("expiration_date_gte".to_string(), d.to_string());
+        }
+        if let Some(d) = expiration_date_lte {
+            params.insert("expiration_date_lte".to_string(), d.to_string());
+        }
+        if let Some(p) = strike_price_gte {
+            params.insert("strike_price_gte".to_string(), p.to_string());
+        }
+        if let Some(p) = strike_price_lte {
+            params.insert("strike_price_lte".to_string(), p.to_string());
+        }
+        if let Some(t) = contract_type {
+            params.insert("type".to_string(), t.to_string());
+        }
+        self.get::<HashMap<String, String>, AlpacaOptionContractsResponse>("/v2/options/contracts", Some(&params))
+            .await
+    }
+
+    /// Exercise an options position.
+    ///
+    /// # Arguments
+    ///
+    /// * `symbol_or_contract_id` - The option symbol or contract ID
+    pub async fn exercise_option(&self, symbol_or_contract_id: &str) -> AlpacaHttpResult<()> {
+        let path = format!("/v2/positions/{symbol_or_contract_id}/exercise");
+        self.post::<HashMap<String, String>, ()>(&path, None, None)
+            .await
+    }
+
+    // ============================================================================
+    // Market Data API Endpoints
+    // ============================================================================
+
+    /// Get historical bars for stocks.
+    ///
+    /// # Arguments
+    ///
+    /// * `symbols` - Comma-separated list of symbols
+    /// * `timeframe` - Bar timeframe (e.g., "1Min", "1Hour", "1Day")
+    /// * `start` - Start time (RFC3339 format)
+    /// * `end` - End time (RFC3339 format)
+    /// * `limit` - Maximum number of bars per symbol
+    pub async fn get_stock_bars(
+        &self,
+        symbols: &str,
+        timeframe: &str,
+        start: Option<&str>,
+        end: Option<&str>,
+        limit: Option<u32>,
+    ) -> AlpacaHttpResult<AlpacaBarsResponse> {
+        let mut params: HashMap<String, String> = HashMap::new();
+        params.insert("symbols".to_string(), symbols.to_string());
+        params.insert("timeframe".to_string(), timeframe.to_string());
+        if let Some(s) = start {
+            params.insert("start".to_string(), s.to_string());
+        }
+        if let Some(e) = end {
+            params.insert("end".to_string(), e.to_string());
+        }
+        if let Some(l) = limit {
+            params.insert("limit".to_string(), l.to_string());
+        }
+        self.get_data::<HashMap<String, String>, AlpacaBarsResponse>("/v2/stocks/bars", Some(&params))
+            .await
+    }
+
+    /// Get historical trades for stocks.
+    ///
+    /// # Arguments
+    ///
+    /// * `symbols` - Comma-separated list of symbols
+    /// * `start` - Start time (RFC3339 format)
+    /// * `end` - End time (RFC3339 format)
+    /// * `limit` - Maximum number of trades per symbol
+    pub async fn get_stock_trades(
+        &self,
+        symbols: &str,
+        start: Option<&str>,
+        end: Option<&str>,
+        limit: Option<u32>,
+    ) -> AlpacaHttpResult<AlpacaTradesResponse> {
+        let mut params: HashMap<String, String> = HashMap::new();
+        params.insert("symbols".to_string(), symbols.to_string());
+        if let Some(s) = start {
+            params.insert("start".to_string(), s.to_string());
+        }
+        if let Some(e) = end {
+            params.insert("end".to_string(), e.to_string());
+        }
+        if let Some(l) = limit {
+            params.insert("limit".to_string(), l.to_string());
+        }
+        self.get_data::<HashMap<String, String>, AlpacaTradesResponse>("/v2/stocks/trades", Some(&params))
+            .await
+    }
+
+    /// Get historical quotes for stocks.
+    ///
+    /// # Arguments
+    ///
+    /// * `symbols` - Comma-separated list of symbols
+    /// * `start` - Start time (RFC3339 format)
+    /// * `end` - End time (RFC3339 format)
+    /// * `limit` - Maximum number of quotes per symbol
+    pub async fn get_stock_quotes(
+        &self,
+        symbols: &str,
+        start: Option<&str>,
+        end: Option<&str>,
+        limit: Option<u32>,
+    ) -> AlpacaHttpResult<AlpacaQuotesResponse> {
+        let mut params: HashMap<String, String> = HashMap::new();
+        params.insert("symbols".to_string(), symbols.to_string());
+        if let Some(s) = start {
+            params.insert("start".to_string(), s.to_string());
+        }
+        if let Some(e) = end {
+            params.insert("end".to_string(), e.to_string());
+        }
+        if let Some(l) = limit {
+            params.insert("limit".to_string(), l.to_string());
+        }
+        self.get_data::<HashMap<String, String>, AlpacaQuotesResponse>("/v2/stocks/quotes", Some(&params))
+            .await
+    }
+
+    /// Get historical bars for crypto.
+    ///
+    /// # Arguments
+    ///
+    /// * `symbols` - Comma-separated list of crypto symbols (e.g., "BTC/USD")
+    /// * `timeframe` - Bar timeframe (e.g., "1Min", "1Hour", "1Day")
+    /// * `start` - Start time (RFC3339 format)
+    /// * `end` - End time (RFC3339 format)
+    /// * `limit` - Maximum number of bars per symbol
+    pub async fn get_crypto_bars(
+        &self,
+        symbols: &str,
+        timeframe: &str,
+        start: Option<&str>,
+        end: Option<&str>,
+        limit: Option<u32>,
+    ) -> AlpacaHttpResult<AlpacaBarsResponse> {
+        let mut params: HashMap<String, String> = HashMap::new();
+        params.insert("symbols".to_string(), symbols.to_string());
+        params.insert("timeframe".to_string(), timeframe.to_string());
+        if let Some(s) = start {
+            params.insert("start".to_string(), s.to_string());
+        }
+        if let Some(e) = end {
+            params.insert("end".to_string(), e.to_string());
+        }
+        if let Some(l) = limit {
+            params.insert("limit".to_string(), l.to_string());
+        }
+        self.get_data::<HashMap<String, String>, AlpacaBarsResponse>("/v1beta3/crypto/us/bars", Some(&params))
+            .await
+    }
+
+    /// Get historical trades for crypto.
+    ///
+    /// # Arguments
+    ///
+    /// * `symbols` - Comma-separated list of crypto symbols
+    /// * `start` - Start time (RFC3339 format)
+    /// * `end` - End time (RFC3339 format)
+    /// * `limit` - Maximum number of trades per symbol
+    pub async fn get_crypto_trades(
+        &self,
+        symbols: &str,
+        start: Option<&str>,
+        end: Option<&str>,
+        limit: Option<u32>,
+    ) -> AlpacaHttpResult<AlpacaTradesResponse> {
+        let mut params: HashMap<String, String> = HashMap::new();
+        params.insert("symbols".to_string(), symbols.to_string());
+        if let Some(s) = start {
+            params.insert("start".to_string(), s.to_string());
+        }
+        if let Some(e) = end {
+            params.insert("end".to_string(), e.to_string());
+        }
+        if let Some(l) = limit {
+            params.insert("limit".to_string(), l.to_string());
+        }
+        self.get_data::<HashMap<String, String>, AlpacaTradesResponse>("/v1beta3/crypto/us/trades", Some(&params))
+            .await
+    }
+
+    // ============================================================================
+    // Private Helper Methods
+    // ============================================================================
+
     async fn request<P, T>(
         &self,
         method: Method,
@@ -200,7 +694,7 @@ impl AlpacaHttpClient {
         let url = self.build_url(base_url, path, &query);
 
         // Add auth headers to request
-        let mut headers = HashMap::new();
+        let mut headers: HashMap<String, String> = HashMap::new();
         headers.insert(
             AlpacaCredential::api_key_header().to_string(),
             self.credential.api_key().to_string(),
@@ -249,7 +743,7 @@ impl AlpacaHttpClient {
     }
 
     fn build_headers_map(credential: &AlpacaCredential) -> HashMap<String, String> {
-        let mut headers = HashMap::new();
+        let mut headers: HashMap<String, String> = HashMap::new();
         headers.insert(
             AlpacaCredential::api_key_header().to_string(),
             credential.api_key().to_string(),
