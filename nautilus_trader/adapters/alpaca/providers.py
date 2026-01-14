@@ -1,6 +1,6 @@
 # -------------------------------------------------------------------------------------------------
-#  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
-#  https://nautechsystems.io
+#  Copyright (C) 2026 Andrew Crum. All rights reserved.
+#  https://github.com/agcrum
 #
 #  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
 #  You may not use this file except in compliance with the License.
@@ -59,10 +59,21 @@ class AlpacaInstrumentProvider(InstrumentProvider):
         client: nautilus_pyo3.AlpacaHttpClient,
         config: InstrumentProviderConfig | None = None,
     ) -> None:
-        super().__init__(config=config)
+        # Create a base InstrumentProviderConfig if we received an Alpaca-specific config
+        if config is not None and hasattr(config, 'load_all'):
+            # This is AlpacaInstrumentProviderConfig from Rust
+            base_config = InstrumentProviderConfig(
+                load_all=config.load_all,
+                log_warnings=config.log_warnings,
+            )
+            super().__init__(config=base_config)
+            self._log_warnings = config.log_warnings
+        else:
+            # Standard InstrumentProviderConfig
+            super().__init__(config=config)
+            self._log_warnings = config.log_warnings if config else True
 
         self._client = client
-        self._log_warnings = config.log_warnings if config else True
 
     async def load_all_async(self, filters: dict | None = None) -> None:
         """

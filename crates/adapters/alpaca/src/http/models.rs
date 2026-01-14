@@ -29,6 +29,7 @@ use pyo3::prelude::*;
 ///
 /// See: <https://docs.alpaca.markets/reference/get-v2-assets>
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "python", pyclass(module = "nautilus_pyo3.alpaca"))]
 pub struct AlpacaAsset {
     /// Unique asset identifier.
     pub id: String,
@@ -154,8 +155,17 @@ pub struct AlpacaAccount {
     pub regt_buying_power: String,
     /// Daytrading buying power.
     pub daytrading_buying_power: String,
+    /// Effective buying power.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_buying_power: Option<String>,
     /// Non-marginable buying power.
     pub non_marginable_buying_power: String,
+    /// Options buying power.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options_buying_power: Option<String>,
+    /// Beginning of day daytrading buying power.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bod_dtbp: Option<String>,
     /// Cash available.
     pub cash: String,
     /// Accumulated fees.
@@ -192,14 +202,18 @@ pub struct AlpacaAccount {
     pub long_market_value: String,
     /// Short market value.
     pub short_market_value: String,
+    /// Position market value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position_market_value: Option<String>,
     /// Initial margin.
     pub initial_margin: String,
     /// Maintenance margin.
     pub maintenance_margin: String,
     /// Last maintenance margin.
     pub last_maintenance_margin: String,
-    /// Stock buying power.
-    pub sip: String,
+    /// SMA (Special Memorandum Account).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sma: Option<String>,
     /// Day trade count.
     pub daytrade_count: i32,
     /// Balance ASOF date.
@@ -208,6 +222,21 @@ pub struct AlpacaAccount {
     /// Crypto status.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub crypto_status: Option<String>,
+    /// Crypto tier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crypto_tier: Option<i32>,
+    /// Options approved level.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options_approved_level: Option<i32>,
+    /// Options trading level.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options_trading_level: Option<i32>,
+    /// Intraday adjustments.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub intraday_adjustments: Option<String>,
+    /// Pending regulatory TAF fees.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_reg_taf_fees: Option<String>,
 }
 
 /// Represents a position from the Alpaca `/v2/positions` endpoint.
