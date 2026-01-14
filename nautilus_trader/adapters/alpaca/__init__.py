@@ -29,16 +29,13 @@ API Documentation: https://docs.alpaca.markets/
 from __future__ import annotations
 
 try:
-    # Import from Rust PyO3 module
+    # Import Rust components (constants, enums, configs, HTTP client, margin calculator)
     from nautilus_trader.core.nautilus_pyo3.alpaca import ALPACA_VENUE
     from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaAssetClass
-    from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaDataClient
     from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaDataClientConfig
     from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaDataFeed
     from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaExecClientConfig
-    from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaExecutionClient
     from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaHttpClient
-    from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaInstrumentProvider
     from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaInstrumentProviderConfig
     from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaOptionsMarginCalculator
 except ImportError:
@@ -46,13 +43,10 @@ except ImportError:
     try:
         from nautilus_pyo3.alpaca import ALPACA_VENUE
         from nautilus_pyo3.alpaca import AlpacaAssetClass
-        from nautilus_pyo3.alpaca import AlpacaDataClient
         from nautilus_pyo3.alpaca import AlpacaDataClientConfig
         from nautilus_pyo3.alpaca import AlpacaDataFeed
         from nautilus_pyo3.alpaca import AlpacaExecClientConfig
-        from nautilus_pyo3.alpaca import AlpacaExecutionClient
         from nautilus_pyo3.alpaca import AlpacaHttpClient
-        from nautilus_pyo3.alpaca import AlpacaInstrumentProvider
         from nautilus_pyo3.alpaca import AlpacaInstrumentProviderConfig
         from nautilus_pyo3.alpaca import AlpacaOptionsMarginCalculator
     except ImportError as e:
@@ -61,6 +55,11 @@ except ImportError:
             "Alpaca adapter Rust module not found. "
             "Please ensure the Rust extension is built with: uv build"
         ) from e
+
+# Import Python implementations (hybrid architecture)
+from nautilus_trader.adapters.alpaca.data import AlpacaDataClient
+from nautilus_trader.adapters.alpaca.execution import AlpacaExecutionClient
+from nautilus_trader.adapters.alpaca.providers import AlpacaInstrumentProvider
 
 # Import factories from Python module
 from nautilus_trader.adapters.alpaca.factories import AlpacaLiveDataClientFactory

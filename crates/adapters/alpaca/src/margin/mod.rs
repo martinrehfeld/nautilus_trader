@@ -301,6 +301,7 @@ impl AlpacaOptionsMarginCalculator {
 
         // Evaluate portfolio payoff at each point
         let mut min_payoff = Decimal::ZERO;
+        let mut max_payoff = Decimal::ZERO;
         for price in evaluation_points {
             let mut total_payoff = Decimal::ZERO;
             for pos in positions {
@@ -317,10 +318,15 @@ impl AlpacaOptionsMarginCalculator {
             if total_payoff < min_payoff {
                 min_payoff = total_payoff;
             }
+            if total_payoff > max_payoff {
+                max_payoff = total_payoff;
+            }
         }
 
-        // Margin is the absolute value of the maximum loss, multiplied by contract size
-        min_payoff.abs() * Decimal::from(contract_multiplier)
+        // For spreads, margin is based on the maximum risk which is the difference
+        // between max and min payoffs (the width of the spread)
+        let risk = max_payoff - min_payoff;
+        risk * Decimal::from(contract_multiplier)
     }
 
     /// Calculates the cost basis for a multi-leg options order.

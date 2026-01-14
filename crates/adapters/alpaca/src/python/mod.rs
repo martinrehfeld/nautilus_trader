@@ -15,12 +15,9 @@
 
 //! Python bindings for the Alpaca adapter.
 
-pub mod data;
 pub mod enums;
-pub mod execution;
 pub mod http;
 pub mod margin;
-pub mod providers;
 pub mod types;
 pub mod websocket;
 
@@ -70,16 +67,10 @@ pub fn alpaca(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<margin::CostBasisResult>()?;
     m.add_class::<margin::MarginValidationResult>()?;
 
-    // Providers
-    m.add_class::<providers::AlpacaInstrumentProvider>()?;
-
-    // Data client
-    m.add_class::<data::AlpacaDataClient>()?;
-    m.add_function(wrap_pyfunction!(data::create_alpaca_data_client, m)?)?;
-
-    // Execution client
-    m.add_class::<execution::AlpacaExecutionClient>()?;
-    m.add_function(wrap_pyfunction!(execution::create_alpaca_exec_client, m)?)?;
+    // Note: AlpacaInstrumentProvider, AlpacaDataClient and AlpacaExecutionClient are implemented in Python
+    // (nautilus_trader/adapters/alpaca/data.py and execution.py) following the
+    // hybrid architecture pattern used in OKX/Bybit adapters. Rust provides the
+    // HTTP/WebSocket clients, and Python provides the framework integration.
 
     Ok(())
 }
