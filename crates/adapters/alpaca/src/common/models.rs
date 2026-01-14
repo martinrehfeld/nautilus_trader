@@ -134,9 +134,7 @@ pub struct AlpacaWsBar {
     pub vwap: Option<Decimal>,
 }
 
-// ================================================================================================
 // Instrument Models
-// ================================================================================================
 
 /// Represents an equity instrument.
 ///
@@ -202,8 +200,10 @@ pub struct AlpacaOptionInstrument {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
-    #[test]
+
+    #[rstest]
     fn test_deserialize_trade() {
         let json = r#"{
             "T": "t",
@@ -224,7 +224,7 @@ mod tests {
         assert_eq!(trade.msg_type, "t");
     }
 
-    #[test]
+    #[rstest]
     fn test_deserialize_quote() {
         let json = r#"{
             "T": "q",
@@ -248,7 +248,7 @@ mod tests {
         assert_eq!(quote.bid_size, 150);
     }
 
-    #[test]
+    #[rstest]
     fn test_deserialize_bar() {
         let json = r#"{
             "T": "b",
@@ -273,7 +273,7 @@ mod tests {
         assert_eq!(bar.trade_count, Some(5000));
     }
 
-    #[test]
+    #[rstest]
     fn test_crypto_trade() {
         let json = r#"{
             "T": "t",

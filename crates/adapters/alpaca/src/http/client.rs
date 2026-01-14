@@ -785,8 +785,10 @@ impl AlpacaHttpClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
-    #[test]
+
+    #[rstest]
     fn test_build_url_with_query() {
         let client = AlpacaHttpClient::new(
             AlpacaEnvironment::Paper,
@@ -804,7 +806,7 @@ mod tests {
         assert_eq!(url, "https://api.example.com/v2/orders?status=open");
     }
 
-    #[test]
+    #[rstest]
     fn test_build_headers() {
         let credential = AlpacaCredential::new("my_key", "my_secret");
         let headers = AlpacaHttpClient::build_headers_map(&credential);
@@ -820,7 +822,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[rstest]
     fn test_base_urls() {
         let client = AlpacaHttpClient::new(
             AlpacaEnvironment::Paper,

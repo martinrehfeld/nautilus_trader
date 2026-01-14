@@ -398,8 +398,10 @@ impl AlpacaMessageHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
-    #[test]
+
+    #[rstest]
     fn test_auth_message_creation() {
         let auth = AlpacaAuthMessage::new("test_key", "test_secret");
         assert_eq!(auth.action, "auth");
@@ -407,7 +409,7 @@ mod tests {
         assert_eq!(auth.secret, "test_secret");
     }
 
-    #[test]
+    #[rstest]
     fn test_subscription_message_creation() {
         let sub = AlpacaSubscriptionMessage::new(
             "subscribe",
@@ -421,7 +423,7 @@ mod tests {
         assert_eq!(sub.bars, Some(vec!["SPY".to_string()]));
     }
 
-    #[test]
+    #[rstest]
     fn test_message_type_parsing() {
         let handler = AlpacaMessageHandler::new();
 
@@ -438,7 +440,7 @@ mod tests {
         assert_eq!(msg_type, AlpacaMessageType::Trade);
     }
 
-    #[test]
+    #[rstest]
     fn test_handle_success() {
         let mut handler = AlpacaMessageHandler::new();
         assert!(!handler.is_authenticated());
@@ -448,7 +450,7 @@ mod tests {
         assert!(handler.is_authenticated());
     }
 
-    #[test]
+    #[rstest]
     fn test_handle_subscription() {
         let mut handler = AlpacaMessageHandler::new();
 
@@ -461,7 +463,7 @@ mod tests {
         assert_eq!(handler.subscribed_quotes.len(), 0);
     }
 
-    #[test]
+    #[rstest]
     fn test_process_message_control() {
         let mut handler = AlpacaMessageHandler::new();
 
@@ -472,7 +474,7 @@ mod tests {
         assert!(handler.is_authenticated());
     }
 
-    #[test]
+    #[rstest]
     fn test_process_message_data() {
         let mut handler = AlpacaMessageHandler::new();
 
@@ -482,7 +484,7 @@ mod tests {
         assert!(result.is_some());
     }
 
-    #[test]
+    #[rstest]
     fn test_clear_subscriptions() {
         let mut handler = AlpacaMessageHandler::new();
 

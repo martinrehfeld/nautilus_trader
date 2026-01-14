@@ -159,30 +159,32 @@ pub enum AlpacaOrderStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
-    #[test]
+
+    #[rstest]
     fn test_environment_default() {
         assert_eq!(AlpacaEnvironment::default(), AlpacaEnvironment::Live);
     }
 
-    #[test]
+    #[rstest]
     fn test_data_feed_default() {
         assert_eq!(AlpacaDataFeed::default(), AlpacaDataFeed::Iex);
     }
 
-    #[test]
+    #[rstest]
     fn test_time_in_force_default() {
         assert_eq!(AlpacaTimeInForce::default(), AlpacaTimeInForce::Day);
     }
 
-    #[test]
+    #[rstest]
     fn test_asset_class_serialization() {
         let asset_class = AlpacaAssetClass::UsEquity;
         let json = serde_json::to_string(&asset_class).unwrap();
         assert_eq!(json, "\"us_equity\"");
     }
 
-    #[test]
+    #[rstest]
     fn test_order_type_serialization() {
         let order_type = AlpacaOrderType::StopLimit;
         let json = serde_json::to_string(&order_type).unwrap();
