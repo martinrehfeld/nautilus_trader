@@ -17,6 +17,7 @@
 
 pub mod enums;
 pub mod http;
+pub mod margin;
 pub mod types;
 pub mod websocket;
 
@@ -32,6 +33,8 @@ use crate::common::consts::ALPACA_NAUTILUS_BROKER_ID;
 pub fn alpaca(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Constants
     m.add(stringify!(ALPACA_NAUTILUS_BROKER_ID), ALPACA_NAUTILUS_BROKER_ID)?;
+    // Add ALPACA_VENUE as an alias for backward compatibility
+    m.add("ALPACA_VENUE", ALPACA_NAUTILUS_BROKER_ID)?;
 
     // Enumerations
     m.add_class::<crate::common::enums::AlpacaEnvironment>()?;
@@ -56,6 +59,13 @@ pub fn alpaca(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // WebSocket client
     m.add_class::<crate::websocket::client::AlpacaWebSocketClient>()?;
+
+    // Margin calculator and related types
+    m.add_class::<margin::AlpacaOptionsMarginCalculator>()?;
+    m.add_class::<margin::OptionPosition>()?;
+    m.add_class::<margin::OrderLeg>()?;
+    m.add_class::<margin::CostBasisResult>()?;
+    m.add_class::<margin::MarginValidationResult>()?;
 
     Ok(())
 }
