@@ -22,7 +22,7 @@ use crate::{
     common::enums::AlpacaEnvironment,
     http::{
         client::AlpacaHttpClient,
-        models::{AlpacaAccount, AlpacaAsset, AlpacaOrder, AlpacaOrderRequest, AlpacaPosition},
+        models::{AlpacaAccount, AlpacaActivity, AlpacaAsset, AlpacaOrder, AlpacaOrderRequest, AlpacaPosition},
     },
 };
 
@@ -407,6 +407,52 @@ impl AlpacaHttpClient {
         })
     }
 
+    // ============================================================================
+    // Activity Endpoints
+    // ============================================================================
+
+    /// Get account activities.
+    ///
+    /// # Arguments
+    ///
+    /// * `activity_types` - Optional comma-separated list of activity types (e.g., "FILL")
+    /// * `after` - Return activities after this timestamp (RFC3339 format)
+    /// * `until` - Return activities until this timestamp (RFC3339 format)
+    /// * `page_size` - Number of activities per page
+    #[pyo3(name = "get_activities")]
+    #[pyo3(signature = (activity_types=None, after=None, until=None, page_size=None))]
+    fn py_get_activities<'py>(
+        &self,
+        py: Python<'py>,
+        activity_types: Option<String>,
+        after: Option<String>,
+        until: Option<String>,
+        page_size: Option<u32>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let activities = client
+                .get_activities(
+                    activity_types.as_deref(),
+                    after.as_deref(),
+                    until.as_deref(),
+                    page_size,
+                )
+                .await
+                .map_err(to_pyvalue_err)?;
+
+            Python::attach(|py| {
+                let py_activities: PyResult<Vec<_>> = activities
+                    .into_iter()
+                    .map(|activity| Py::new(py, activity))
+                    .collect();
+                let pylist = PyList::new(py, py_activities?).unwrap().into_any().unbind();
+                Ok(pylist)
+            })
+        })
+    }
+
 }
 
 // Python bindings for HTTP models
@@ -457,6 +503,16 @@ impl AlpacaAccount {
     #[getter]
     fn equity(&self) -> &str {
         &self.equity
+    }
+
+    #[getter]
+    fn initial_margin(&self) -> &str {
+        &self.initial_margin
+    }
+
+    #[getter]
+    fn maintenance_margin(&self) -> &str {
+        &self.maintenance_margin
     }
 }
 
@@ -749,5 +805,70 @@ impl AlpacaAsset {
     #[getter]
     fn price_increment(&self) -> Option<&str> {
         self.price_increment.as_deref()
+    }
+}
+
+#[pymethods]
+impl AlpacaActivity {
+    fn __repr__(&self) -> String {
+        format!(
+            "AlpacaActivity(id='{}', type='{}', symbol={:?})",
+            self.id, self.activity_type, self.symbol
+        )
+    }
+
+    #[getter]
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    #[getter]
+    fn activity_type(&self) -> &str {
+        &self.activity_type
+    }
+
+    #[getter]
+    fn transaction_time(&self) -> &str {
+        &self.transaction_time
+    }
+
+    #[getter]
+    fn fill_type(&self) -> Option<&str> {
+        self.fill_type.as_deref()
+    }
+
+    #[getter]
+    fn order_id(&self) -> Option<&str> {
+        self.order_id.as_deref()
+    }
+
+    #[getter]
+    fn symbol(&self) -> Option<&str> {
+        self.symbol.as_deref()
+    }
+
+    #[getter]
+    fn side(&self) -> Option<&str> {
+        self.side.as_deref()
+    }
+
+    #[getter]
+    fn qty(&self) -> Option<&str> {
+        self.qty.as_deref()
+    }
+
+    #[getter]
+    fn price(&self) -> Option<&str> {
+        self.price.as_deref()
+    }
+
+    #[getter]
+    fn leaves_qty(&self) -> Option<&str> {
+        self.leaves_qty.as_deref()
+    }
+
+    #[getter]
+    fn cum_qty(&self) -> Option<&str> {
+        self.cum_qty.as_deref()
     }
 }

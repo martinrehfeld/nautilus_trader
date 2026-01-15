@@ -136,18 +136,20 @@ class AlpacaDataClient(LiveMarketDataClient):
         # Create WebSocket config
         ws_config = nautilus_pyo3.WebSocketConfig(
             url=alpaca_ws_client.url,
-            handler=self._handle_ws_message,
-            heartbeat=20,
-            heartbeat_msg="",
             headers=[],
+            heartbeat=20,
         )
 
         # Create WebSocket client
         self._ws_client = await nautilus_pyo3.WebSocketClient.connect(
+            loop_=self._loop,
             config=ws_config,
-            post_connection=self._post_connection,
+            handler=self._handle_ws_message,
             post_reconnection=self._post_reconnection,
         )
+
+        # Perform initial authentication
+        await self._post_connection()
 
         self._log.info("Connected to Alpaca data feeds", LogColor.GREEN)
 
@@ -184,7 +186,7 @@ class AlpacaDataClient(LiveMarketDataClient):
 
         auth_msg = alpaca_ws_client.auth_message()
         self._log.debug(f"Sending auth message: {auth_msg}")
-        await self._ws_client.send_text(auth_msg)
+        await self._ws_client.send_text(auth_msg.encode("utf-8"))
 
     async def _post_reconnection(self) -> None:
         """
@@ -210,7 +212,7 @@ class AlpacaDataClient(LiveMarketDataClient):
             return
 
         msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_trades_message(symbols)
-        await self._ws_client.send_text(msg)
+        await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Resubscribed to trades: {symbols}")
 
     async def _resubscribe_quotes(self, symbols: list[str]) -> None:
@@ -219,7 +221,7 @@ class AlpacaDataClient(LiveMarketDataClient):
             return
 
         msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_quotes_message(symbols)
-        await self._ws_client.send_text(msg)
+        await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Resubscribed to quotes: {symbols}")
 
     async def _resubscribe_bars(self, symbols: list[str]) -> None:
@@ -228,7 +230,7 @@ class AlpacaDataClient(LiveMarketDataClient):
             return
 
         msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_bars_message(symbols)
-        await self._ws_client.send_text(msg)
+        await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Resubscribed to bars: {symbols}")
 
     def _handle_ws_message(self, raw: bytes) -> None:
@@ -403,7 +405,7 @@ class AlpacaDataClient(LiveMarketDataClient):
         self._trade_subscriptions.add(symbol)
 
         msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_trades_message([symbol])
-        await self._ws_client.send_text(msg)
+        await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Subscribed to trade ticks: {instrument_id}")
 
     async def _subscribe_quote_ticks(self, instrument_id: InstrumentId) -> None:
@@ -424,7 +426,7 @@ class AlpacaDataClient(LiveMarketDataClient):
         self._quote_subscriptions.add(symbol)
 
         msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_quotes_message([symbol])
-        await self._ws_client.send_text(msg)
+        await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Subscribed to quote ticks: {instrument_id}")
 
     async def _subscribe_bars(self, bar_type: BarType) -> None:
@@ -445,7 +447,7 @@ class AlpacaDataClient(LiveMarketDataClient):
         self._bar_subscriptions.add(symbol)
 
         msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_bars_message([symbol])
-        await self._ws_client.send_text(msg)
+        await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Subscribed to bars: {bar_type}")
 
     async def _unsubscribe_trade_ticks(self, instrument_id: InstrumentId) -> None:
@@ -457,7 +459,7 @@ class AlpacaDataClient(LiveMarketDataClient):
         self._trade_subscriptions.discard(symbol)
 
         msg = nautilus_pyo3.AlpacaWebSocketClient.unsubscribe_trades_message([symbol])
-        await self._ws_client.send_text(msg)
+        await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Unsubscribed from trade ticks: {instrument_id}")
 
     async def _unsubscribe_quote_ticks(self, instrument_id: InstrumentId) -> None:
@@ -469,7 +471,7 @@ class AlpacaDataClient(LiveMarketDataClient):
         self._quote_subscriptions.discard(symbol)
 
         msg = nautilus_pyo3.AlpacaWebSocketClient.unsubscribe_quotes_message([symbol])
-        await self._ws_client.send_text(msg)
+        await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Unsubscribed from quote ticks: {instrument_id}")
 
     async def _unsubscribe_bars(self, bar_type: BarType) -> None:
@@ -481,7 +483,7 @@ class AlpacaDataClient(LiveMarketDataClient):
         self._bar_subscriptions.discard(symbol)
 
         msg = nautilus_pyo3.AlpacaWebSocketClient.unsubscribe_bars_message([symbol])
-        await self._ws_client.send_text(msg)
+        await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Unsubscribed from bars: {bar_type}")
 
     async def _request_bars(

@@ -58,6 +58,8 @@ class AlpacaDataClientConfig(LiveDataClientConfig, frozen=True):
         If ``None`` then will source the `ALPACA_API_SECRET` environment variable.
     paper_trading : bool, default True
         If the client should connect to paper trading endpoints.
+    asset_class : AlpacaAssetClass, default AlpacaAssetClass.UsEquity
+        The asset class for WebSocket data streams (us_equity or crypto).
     data_feed : AlpacaDataFeed, default AlpacaDataFeed.IEX
         The market data feed subscription level (IEX or SIP).
     base_url_http : str, optional
@@ -78,6 +80,7 @@ class AlpacaDataClientConfig(LiveDataClientConfig, frozen=True):
     api_key: str | None = None
     api_secret: str | None = None
     paper_trading: bool = True
+    asset_class: AlpacaAssetClass = AlpacaAssetClass.UsEquity
     data_feed: AlpacaDataFeed = AlpacaDataFeed.Iex
     base_url_http: str | None = None
     base_url_ws: str | None = None
