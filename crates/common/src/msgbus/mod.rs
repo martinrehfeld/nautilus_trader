@@ -36,23 +36,26 @@ use std::{
     any::Any,
     cell::{OnceCell, RefCell},
     rc::Rc,
+    thread::LocalKey,
 };
 
 use handler::ShareableMessageHandler;
 use matching::is_matching_backtracking;
 pub use mstr::{Endpoint, MStr, Pattern, Topic};
 use nautilus_core::UUID4;
+#[cfg(feature = "defi")]
+use nautilus_model::defi::{Block, Pool, PoolFeeCollect, PoolFlash, PoolLiquidityUpdate, PoolSwap};
 use nautilus_model::{
     data::{
-        Bar, FundingRateUpdate, GreeksData, IndexPriceUpdate, InstrumentClose, MarkPriceUpdate,
-        OrderBookDeltas, OrderBookDepth10, QuoteTick, TradeTick,
+        Bar, FundingRateUpdate, GreeksData, IndexPriceUpdate, MarkPriceUpdate, OrderBookDeltas,
+        OrderBookDepth10, QuoteTick, TradeTick,
     },
     events::{AccountState, OrderEventAny, PositionEvent},
-    instruments::InstrumentAny,
     orderbook::OrderBook,
     orders::OrderAny,
     position::Position,
 };
+use smallvec::SmallVec;
 pub use typed_endpoints::EndpointMap;
 pub use typed_handler::{CallbackHandler, Handler, TypedHandler};
 pub use typed_router::{TopicRouter, TypedSubscription};
@@ -60,12 +63,68 @@ pub use typed_router::{TopicRouter, TypedSubscription};
 use crate::messages::data::DataResponse;
 pub use crate::msgbus::message::BusMessage;
 
+/// Inline capacity for handler buffers before heap allocation.
+const HANDLER_BUFFER_CAP: usize = 64;
+
 // MessageBus is designed for single-threaded use within each async runtime.
 // Thread-local storage ensures each thread gets its own instance, eliminating
-// the need for unsafe Send/Sync implementations that were previously required
-// for global static storage.
+// the need for unsafe Send/Sync implementations.
+//
+// Handler buffers provide zero-allocation publish on hot paths.
+// Each buffer stores up to 64 handlers inline before spilling to heap.
+// Publish functions use move-out/move-back to avoid holding RefCell borrows
+// during handler calls (enabling re-entrant publishes).
 thread_local! {
     static MESSAGE_BUS: OnceCell<Rc<RefCell<MessageBus>>> = const { OnceCell::new() };
+
+    static ANY_HANDLERS: RefCell<SmallVec<[ShareableMessageHandler; HANDLER_BUFFER_CAP]>> =
+        RefCell::new(SmallVec::new());
+
+    static DELTAS_HANDLERS: RefCell<SmallVec<[TypedHandler<OrderBookDeltas>; HANDLER_BUFFER_CAP]>> =
+        RefCell::new(SmallVec::new());
+    static DEPTH10_HANDLERS: RefCell<SmallVec<[TypedHandler<OrderBookDepth10>; HANDLER_BUFFER_CAP]>> =
+        RefCell::new(SmallVec::new());
+    static BOOK_HANDLERS: RefCell<SmallVec<[TypedHandler<OrderBook>; HANDLER_BUFFER_CAP]>> =
+        RefCell::new(SmallVec::new());
+    static QUOTE_HANDLERS: RefCell<SmallVec<[TypedHandler<QuoteTick>; HANDLER_BUFFER_CAP]>> =
+        RefCell::new(SmallVec::new());
+    static TRADE_HANDLERS: RefCell<SmallVec<[TypedHandler<TradeTick>; HANDLER_BUFFER_CAP]>> =
+        RefCell::new(SmallVec::new());
+    static BAR_HANDLERS: RefCell<SmallVec<[TypedHandler<Bar>; HANDLER_BUFFER_CAP]>> =
+        RefCell::new(SmallVec::new());
+    static MARK_PRICE_HANDLERS: RefCell<SmallVec<[TypedHandler<MarkPriceUpdate>; HANDLER_BUFFER_CAP]>> =
+        RefCell::new(SmallVec::new());
+    static INDEX_PRICE_HANDLERS: RefCell<SmallVec<[TypedHandler<IndexPriceUpdate>; HANDLER_BUFFER_CAP]>> =
+        RefCell::new(SmallVec::new());
+    static FUNDING_RATE_HANDLERS: RefCell<SmallVec<[TypedHandler<FundingRateUpdate>; HANDLER_BUFFER_CAP]>> =
+        RefCell::new(SmallVec::new());
+    static GREEKS_HANDLERS: RefCell<SmallVec<[TypedHandler<GreeksData>; HANDLER_BUFFER_CAP]>> =
+        RefCell::new(SmallVec::new());
+    static ACCOUNT_STATE_HANDLERS: RefCell<SmallVec<[TypedHandler<AccountState>; HANDLER_BUFFER_CAP]>> =
+        RefCell::new(SmallVec::new());
+    static ORDER_EVENT_HANDLERS: RefCell<SmallVec<[TypedHandler<OrderEventAny>; HANDLER_BUFFER_CAP]>> =
+        RefCell::new(SmallVec::new());
+    static POSITION_EVENT_HANDLERS: RefCell<SmallVec<[TypedHandler<PositionEvent>; HANDLER_BUFFER_CAP]>> =
+        RefCell::new(SmallVec::new());
+
+    #[cfg(feature = "defi")]
+    static DEFI_BLOCK_HANDLERS: RefCell<SmallVec<[TypedHandler<Block>; HANDLER_BUFFER_CAP]>> =
+        RefCell::new(SmallVec::new());
+    #[cfg(feature = "defi")]
+    static DEFI_POOL_HANDLERS: RefCell<SmallVec<[TypedHandler<Pool>; HANDLER_BUFFER_CAP]>> =
+        RefCell::new(SmallVec::new());
+    #[cfg(feature = "defi")]
+    static DEFI_SWAP_HANDLERS: RefCell<SmallVec<[TypedHandler<PoolSwap>; HANDLER_BUFFER_CAP]>> =
+        RefCell::new(SmallVec::new());
+    #[cfg(feature = "defi")]
+    static DEFI_LIQUIDITY_HANDLERS: RefCell<SmallVec<[TypedHandler<PoolLiquidityUpdate>; HANDLER_BUFFER_CAP]>> =
+        RefCell::new(SmallVec::new());
+    #[cfg(feature = "defi")]
+    static DEFI_COLLECT_HANDLERS: RefCell<SmallVec<[TypedHandler<PoolFeeCollect>; HANDLER_BUFFER_CAP]>> =
+        RefCell::new(SmallVec::new());
+    #[cfg(feature = "defi")]
+    static DEFI_FLASH_HANDLERS: RefCell<SmallVec<[TypedHandler<PoolFlash>; HANDLER_BUFFER_CAP]>> =
+        RefCell::new(SmallVec::new());
 }
 
 /// Sets the thread-local message bus.
@@ -107,6 +166,7 @@ pub fn register_any(endpoint: MStr<Endpoint>, handler: ShareableMessageHandler) 
         .insert(endpoint, handler);
 }
 
+/// Registers a response handler for a correlation ID.
 pub fn register_response_handler(correlation_id: &UUID4, handler: ShareableMessageHandler) {
     if let Err(e) = get_message_bus()
         .borrow_mut()
@@ -116,6 +176,7 @@ pub fn register_response_handler(correlation_id: &UUID4, handler: ShareableMessa
     }
 }
 
+/// Registers a quote tick handler at an endpoint.
 pub fn register_quote_endpoint(endpoint: MStr<Endpoint>, handler: TypedHandler<QuoteTick>) {
     get_message_bus()
         .borrow_mut()
@@ -123,6 +184,7 @@ pub fn register_quote_endpoint(endpoint: MStr<Endpoint>, handler: TypedHandler<Q
         .register(endpoint, handler);
 }
 
+/// Registers a trade tick handler at an endpoint.
 pub fn register_trade_endpoint(endpoint: MStr<Endpoint>, handler: TypedHandler<TradeTick>) {
     get_message_bus()
         .borrow_mut()
@@ -130,6 +192,7 @@ pub fn register_trade_endpoint(endpoint: MStr<Endpoint>, handler: TypedHandler<T
         .register(endpoint, handler);
 }
 
+/// Registers a bar handler at an endpoint.
 pub fn register_bar_endpoint(endpoint: MStr<Endpoint>, handler: TypedHandler<Bar>) {
     get_message_bus()
         .borrow_mut()
@@ -137,6 +200,7 @@ pub fn register_bar_endpoint(endpoint: MStr<Endpoint>, handler: TypedHandler<Bar
         .register(endpoint, handler);
 }
 
+/// Registers an order event handler at an endpoint.
 pub fn register_order_event_endpoint(
     endpoint: MStr<Endpoint>,
     handler: TypedHandler<OrderEventAny>,
@@ -144,6 +208,17 @@ pub fn register_order_event_endpoint(
     get_message_bus()
         .borrow_mut()
         .endpoints_order_events
+        .register(endpoint, handler);
+}
+
+/// Registers an account state handler at an endpoint.
+pub fn register_account_state_endpoint(
+    endpoint: MStr<Endpoint>,
+    handler: TypedHandler<AccountState>,
+) {
+    get_message_bus()
+        .borrow_mut()
+        .endpoints_account_state
         .register(endpoint, handler);
 }
 
@@ -197,29 +272,50 @@ pub fn subscribe_any(
     msgbus_ref_mut.subscriptions.insert(sub);
 }
 
+/// Subscribes a handler to instrument messages matching a pattern.
 pub fn subscribe_instruments(
     pattern: MStr<Pattern>,
-    handler: TypedHandler<InstrumentAny>,
+    handler: ShareableMessageHandler,
     priority: Option<u8>,
 ) {
-    get_message_bus().borrow_mut().router_instruments.subscribe(
+    subscribe_any(pattern, handler, priority);
+}
+
+/// Subscribes a handler to instrument close messages matching a pattern.
+pub fn subscribe_instrument_close(
+    pattern: MStr<Pattern>,
+    handler: ShareableMessageHandler,
+    priority: Option<u8>,
+) {
+    subscribe_any(pattern, handler, priority);
+}
+
+/// Subscribes a handler to order book deltas matching a pattern.
+pub fn subscribe_book_deltas(
+    pattern: MStr<Pattern>,
+    handler: TypedHandler<OrderBookDeltas>,
+    priority: Option<u8>,
+) {
+    get_message_bus()
+        .borrow_mut()
+        .router_deltas
+        .subscribe(pattern, handler, priority.unwrap_or(0));
+}
+
+/// Subscribes a handler to order book depth10 snapshots matching a pattern.
+pub fn subscribe_book_depth10(
+    pattern: MStr<Pattern>,
+    handler: TypedHandler<OrderBookDepth10>,
+    priority: Option<u8>,
+) {
+    get_message_bus().borrow_mut().router_depth10.subscribe(
         pattern,
         handler,
         priority.unwrap_or(0),
     );
 }
 
-pub fn subscribe_instrument_close(
-    pattern: MStr<Pattern>,
-    handler: TypedHandler<InstrumentClose>,
-    priority: Option<u8>,
-) {
-    get_message_bus()
-        .borrow_mut()
-        .router_instrument_close
-        .subscribe(pattern, handler, priority.unwrap_or(0));
-}
-
+/// Subscribes a handler to order book snapshots matching a pattern.
 pub fn subscribe_book_snapshots(
     pattern: MStr<Pattern>,
     handler: TypedHandler<OrderBook>,
@@ -231,6 +327,7 @@ pub fn subscribe_book_snapshots(
         .subscribe(pattern, handler, priority.unwrap_or(0));
 }
 
+/// Subscribes a handler to quote ticks matching a pattern.
 pub fn subscribe_quotes(
     pattern: MStr<Pattern>,
     handler: TypedHandler<QuoteTick>,
@@ -242,6 +339,7 @@ pub fn subscribe_quotes(
         .subscribe(pattern, handler, priority.unwrap_or(0));
 }
 
+/// Subscribes a handler to trade ticks matching a pattern.
 pub fn subscribe_trades(
     pattern: MStr<Pattern>,
     handler: TypedHandler<TradeTick>,
@@ -253,6 +351,15 @@ pub fn subscribe_trades(
         .subscribe(pattern, handler, priority.unwrap_or(0));
 }
 
+/// Subscribes a handler to bars matching a pattern.
+pub fn subscribe_bars(pattern: MStr<Pattern>, handler: TypedHandler<Bar>, priority: Option<u8>) {
+    get_message_bus()
+        .borrow_mut()
+        .router_bars
+        .subscribe(pattern, handler, priority.unwrap_or(0));
+}
+
+/// Subscribes a handler to mark price updates matching a pattern.
 pub fn subscribe_mark_prices(
     pattern: MStr<Pattern>,
     handler: TypedHandler<MarkPriceUpdate>,
@@ -265,6 +372,7 @@ pub fn subscribe_mark_prices(
     );
 }
 
+/// Subscribes a handler to index price updates matching a pattern.
 pub fn subscribe_index_prices(
     pattern: MStr<Pattern>,
     handler: TypedHandler<IndexPriceUpdate>,
@@ -276,6 +384,7 @@ pub fn subscribe_index_prices(
         .subscribe(pattern, handler, priority.unwrap_or(0));
 }
 
+/// Subscribes a handler to funding rate updates matching a pattern.
 pub fn subscribe_funding_rates(
     pattern: MStr<Pattern>,
     handler: TypedHandler<FundingRateUpdate>,
@@ -287,36 +396,19 @@ pub fn subscribe_funding_rates(
         .subscribe(pattern, handler, priority.unwrap_or(0));
 }
 
-pub fn subscribe_bars(pattern: MStr<Pattern>, handler: TypedHandler<Bar>, priority: Option<u8>) {
-    get_message_bus()
-        .borrow_mut()
-        .router_bars
-        .subscribe(pattern, handler, priority.unwrap_or(0));
-}
-
-pub fn subscribe_deltas(
+/// Subscribes a handler to greeks data matching a pattern.
+pub fn subscribe_greeks(
     pattern: MStr<Pattern>,
-    handler: TypedHandler<OrderBookDeltas>,
+    handler: TypedHandler<GreeksData>,
     priority: Option<u8>,
 ) {
     get_message_bus()
         .borrow_mut()
-        .router_deltas
+        .router_greeks
         .subscribe(pattern, handler, priority.unwrap_or(0));
 }
 
-pub fn subscribe_depth10(
-    pattern: MStr<Pattern>,
-    handler: TypedHandler<OrderBookDepth10>,
-    priority: Option<u8>,
-) {
-    get_message_bus().borrow_mut().router_depth10.subscribe(
-        pattern,
-        handler,
-        priority.unwrap_or(0),
-    );
-}
-
+/// Subscribes a handler to order events matching a pattern.
 pub fn subscribe_order_events(
     pattern: MStr<Pattern>,
     handler: TypedHandler<OrderEventAny>,
@@ -328,6 +420,7 @@ pub fn subscribe_order_events(
         .subscribe(pattern, handler, priority.unwrap_or(0));
 }
 
+/// Subscribes a handler to position events matching a pattern.
 pub fn subscribe_position_events(
     pattern: MStr<Pattern>,
     handler: TypedHandler<PositionEvent>,
@@ -339,6 +432,7 @@ pub fn subscribe_position_events(
         .subscribe(pattern, handler, priority.unwrap_or(0));
 }
 
+/// Subscribes a handler to account state updates matching a pattern.
 pub fn subscribe_account_state(
     pattern: MStr<Pattern>,
     handler: TypedHandler<AccountState>,
@@ -350,17 +444,7 @@ pub fn subscribe_account_state(
         .subscribe(pattern, handler, priority.unwrap_or(0));
 }
 
-pub fn subscribe_orders(
-    pattern: MStr<Pattern>,
-    handler: TypedHandler<OrderAny>,
-    priority: Option<u8>,
-) {
-    get_message_bus()
-        .borrow_mut()
-        .router_orders
-        .subscribe(pattern, handler, priority.unwrap_or(0));
-}
-
+/// Subscribes a handler to positions matching a pattern.
 pub fn subscribe_positions(
     pattern: MStr<Pattern>,
     handler: TypedHandler<Position>,
@@ -373,21 +457,11 @@ pub fn subscribe_positions(
     );
 }
 
-pub fn subscribe_greeks(
-    pattern: MStr<Pattern>,
-    handler: TypedHandler<GreeksData>,
-    priority: Option<u8>,
-) {
-    get_message_bus()
-        .borrow_mut()
-        .router_greeks
-        .subscribe(pattern, handler, priority.unwrap_or(0));
-}
-
+/// Subscribes a handler to DeFi blocks matching a pattern.
 #[cfg(feature = "defi")]
 pub fn subscribe_defi_blocks(
     pattern: MStr<Pattern>,
-    handler: TypedHandler<nautilus_model::defi::Block>, // nautilus-import-ok
+    handler: TypedHandler<Block>,
     priority: Option<u8>,
 ) {
     get_message_bus().borrow_mut().router_defi_blocks.subscribe(
@@ -397,10 +471,11 @@ pub fn subscribe_defi_blocks(
     );
 }
 
+/// Subscribes a handler to DeFi pools matching a pattern.
 #[cfg(feature = "defi")]
 pub fn subscribe_defi_pools(
     pattern: MStr<Pattern>,
-    handler: TypedHandler<nautilus_model::defi::Pool>, // nautilus-import-ok
+    handler: TypedHandler<Pool>,
     priority: Option<u8>,
 ) {
     get_message_bus().borrow_mut().router_defi_pools.subscribe(
@@ -410,10 +485,11 @@ pub fn subscribe_defi_pools(
     );
 }
 
+/// Subscribes a handler to DeFi pool swaps matching a pattern.
 #[cfg(feature = "defi")]
 pub fn subscribe_defi_swaps(
     pattern: MStr<Pattern>,
-    handler: TypedHandler<nautilus_model::defi::PoolSwap>, // nautilus-import-ok
+    handler: TypedHandler<PoolSwap>,
     priority: Option<u8>,
 ) {
     get_message_bus().borrow_mut().router_defi_swaps.subscribe(
@@ -423,10 +499,11 @@ pub fn subscribe_defi_swaps(
     );
 }
 
+/// Subscribes a handler to DeFi liquidity updates matching a pattern.
 #[cfg(feature = "defi")]
 pub fn subscribe_defi_liquidity(
     pattern: MStr<Pattern>,
-    handler: TypedHandler<nautilus_model::defi::PoolLiquidityUpdate>, // nautilus-import-ok
+    handler: TypedHandler<PoolLiquidityUpdate>,
     priority: Option<u8>,
 ) {
     get_message_bus()
@@ -435,10 +512,11 @@ pub fn subscribe_defi_liquidity(
         .subscribe(pattern, handler, priority.unwrap_or(0));
 }
 
+/// Subscribes a handler to DeFi fee collects matching a pattern.
 #[cfg(feature = "defi")]
 pub fn subscribe_defi_collects(
     pattern: MStr<Pattern>,
-    handler: TypedHandler<nautilus_model::defi::PoolFeeCollect>, // nautilus-import-ok
+    handler: TypedHandler<PoolFeeCollect>,
     priority: Option<u8>,
 ) {
     get_message_bus()
@@ -447,10 +525,11 @@ pub fn subscribe_defi_collects(
         .subscribe(pattern, handler, priority.unwrap_or(0));
 }
 
+/// Subscribes a handler to DeFi flash loans matching a pattern.
 #[cfg(feature = "defi")]
 pub fn subscribe_defi_flash(
     pattern: MStr<Pattern>,
-    handler: TypedHandler<nautilus_model::defi::PoolFlash>, // nautilus-import-ok
+    handler: TypedHandler<PoolFlash>,
     priority: Option<u8>,
 ) {
     get_message_bus().borrow_mut().router_defi_flash.subscribe(
@@ -460,27 +539,41 @@ pub fn subscribe_defi_flash(
     );
 }
 
-pub fn unsubscribe_instruments(pattern: MStr<Pattern>, handler: &TypedHandler<InstrumentAny>) {
-    get_message_bus()
-        .borrow_mut()
-        .router_instruments
-        .unsubscribe(pattern, handler);
+/// Unsubscribes a handler from instrument messages.
+pub fn unsubscribe_instruments(pattern: MStr<Pattern>, handler: ShareableMessageHandler) {
+    unsubscribe_any(pattern, handler);
 }
 
-pub fn unsubscribe_deltas(pattern: MStr<Pattern>, handler: &TypedHandler<OrderBookDeltas>) {
+/// Unsubscribes a handler from instrument close messages.
+pub fn unsubscribe_instrument_close(pattern: MStr<Pattern>, handler: ShareableMessageHandler) {
+    unsubscribe_any(pattern, handler);
+}
+
+/// Unsubscribes a handler from order book deltas.
+pub fn unsubscribe_book_deltas(pattern: MStr<Pattern>, handler: &TypedHandler<OrderBookDeltas>) {
     get_message_bus()
         .borrow_mut()
         .router_deltas
         .unsubscribe(pattern, handler);
 }
 
-pub fn unsubscribe_depth10(pattern: MStr<Pattern>, handler: &TypedHandler<OrderBookDepth10>) {
+/// Unsubscribes a handler from order book depth10 snapshots.
+pub fn unsubscribe_book_depth10(pattern: MStr<Pattern>, handler: &TypedHandler<OrderBookDepth10>) {
     get_message_bus()
         .borrow_mut()
         .router_depth10
         .unsubscribe(pattern, handler);
 }
 
+/// Unsubscribes a handler from order book snapshots.
+pub fn unsubscribe_book_snapshots(pattern: MStr<Pattern>, handler: &TypedHandler<OrderBook>) {
+    get_message_bus()
+        .borrow_mut()
+        .router_book_snapshots
+        .unsubscribe(pattern, handler);
+}
+
+/// Unsubscribes a handler from quote ticks.
 pub fn unsubscribe_quotes(pattern: MStr<Pattern>, handler: &TypedHandler<QuoteTick>) {
     get_message_bus()
         .borrow_mut()
@@ -488,6 +581,7 @@ pub fn unsubscribe_quotes(pattern: MStr<Pattern>, handler: &TypedHandler<QuoteTi
         .unsubscribe(pattern, handler);
 }
 
+/// Unsubscribes a handler from trade ticks.
 pub fn unsubscribe_trades(pattern: MStr<Pattern>, handler: &TypedHandler<TradeTick>) {
     get_message_bus()
         .borrow_mut()
@@ -495,20 +589,7 @@ pub fn unsubscribe_trades(pattern: MStr<Pattern>, handler: &TypedHandler<TradeTi
         .unsubscribe(pattern, handler);
 }
 
-pub fn unsubscribe_mark_prices(pattern: MStr<Pattern>, handler: &TypedHandler<MarkPriceUpdate>) {
-    get_message_bus()
-        .borrow_mut()
-        .router_mark_prices
-        .unsubscribe(pattern, handler);
-}
-
-pub fn unsubscribe_index_prices(pattern: MStr<Pattern>, handler: &TypedHandler<IndexPriceUpdate>) {
-    get_message_bus()
-        .borrow_mut()
-        .router_index_prices
-        .unsubscribe(pattern, handler);
-}
-
+/// Unsubscribes a handler from bars.
 pub fn unsubscribe_bars(pattern: MStr<Pattern>, handler: &TypedHandler<Bar>) {
     get_message_bus()
         .borrow_mut()
@@ -516,27 +597,23 @@ pub fn unsubscribe_bars(pattern: MStr<Pattern>, handler: &TypedHandler<Bar>) {
         .unsubscribe(pattern, handler);
 }
 
-pub fn unsubscribe_order_events(pattern: MStr<Pattern>, handler: &TypedHandler<OrderEventAny>) {
+/// Unsubscribes a handler from mark price updates.
+pub fn unsubscribe_mark_prices(pattern: MStr<Pattern>, handler: &TypedHandler<MarkPriceUpdate>) {
     get_message_bus()
         .borrow_mut()
-        .router_order_events
+        .router_mark_prices
         .unsubscribe(pattern, handler);
 }
 
-pub fn unsubscribe_position_events(pattern: MStr<Pattern>, handler: &TypedHandler<PositionEvent>) {
+/// Unsubscribes a handler from index price updates.
+pub fn unsubscribe_index_prices(pattern: MStr<Pattern>, handler: &TypedHandler<IndexPriceUpdate>) {
     get_message_bus()
         .borrow_mut()
-        .router_position_events
+        .router_index_prices
         .unsubscribe(pattern, handler);
 }
 
-pub fn unsubscribe_account_state(pattern: MStr<Pattern>, handler: &TypedHandler<AccountState>) {
-    get_message_bus()
-        .borrow_mut()
-        .router_account_state
-        .unsubscribe(pattern, handler);
-}
-
+/// Unsubscribes a handler from funding rate updates.
 pub fn unsubscribe_funding_rates(
     pattern: MStr<Pattern>,
     handler: &TypedHandler<FundingRateUpdate>,
@@ -547,23 +624,31 @@ pub fn unsubscribe_funding_rates(
         .unsubscribe(pattern, handler);
 }
 
-pub fn unsubscribe_instrument_close(
-    pattern: MStr<Pattern>,
-    handler: &TypedHandler<InstrumentClose>,
-) {
+/// Unsubscribes a handler from account state updates.
+pub fn unsubscribe_account_state(pattern: MStr<Pattern>, handler: &TypedHandler<AccountState>) {
     get_message_bus()
         .borrow_mut()
-        .router_instrument_close
+        .router_account_state
         .unsubscribe(pattern, handler);
 }
 
-pub fn unsubscribe_book_snapshots(pattern: MStr<Pattern>, handler: &TypedHandler<OrderBook>) {
+/// Unsubscribes a handler from order events.
+pub fn unsubscribe_order_events(pattern: MStr<Pattern>, handler: &TypedHandler<OrderEventAny>) {
     get_message_bus()
         .borrow_mut()
-        .router_book_snapshots
+        .router_order_events
         .unsubscribe(pattern, handler);
 }
 
+/// Unsubscribes a handler from position events.
+pub fn unsubscribe_position_events(pattern: MStr<Pattern>, handler: &TypedHandler<PositionEvent>) {
+    get_message_bus()
+        .borrow_mut()
+        .router_position_events
+        .unsubscribe(pattern, handler);
+}
+
+/// Unsubscribes a handler from orders.
 pub fn unsubscribe_orders(pattern: MStr<Pattern>, handler: &TypedHandler<OrderAny>) {
     get_message_bus()
         .borrow_mut()
@@ -571,6 +656,7 @@ pub fn unsubscribe_orders(pattern: MStr<Pattern>, handler: &TypedHandler<OrderAn
         .unsubscribe(pattern, handler);
 }
 
+/// Unsubscribes a handler from positions.
 pub fn unsubscribe_positions(pattern: MStr<Pattern>, handler: &TypedHandler<Position>) {
     get_message_bus()
         .borrow_mut()
@@ -578,6 +664,7 @@ pub fn unsubscribe_positions(pattern: MStr<Pattern>, handler: &TypedHandler<Posi
         .unsubscribe(pattern, handler);
 }
 
+/// Unsubscribes a handler from greeks data.
 pub fn unsubscribe_greeks(pattern: MStr<Pattern>, handler: &TypedHandler<GreeksData>) {
     get_message_bus()
         .borrow_mut()
@@ -585,43 +672,38 @@ pub fn unsubscribe_greeks(pattern: MStr<Pattern>, handler: &TypedHandler<GreeksD
         .unsubscribe(pattern, handler);
 }
 
+/// Unsubscribes a handler from DeFi blocks.
 #[cfg(feature = "defi")]
-pub fn unsubscribe_defi_blocks(
-    pattern: MStr<Pattern>,
-    handler: &TypedHandler<nautilus_model::defi::Block>, // nautilus-import-ok
-) {
+pub fn unsubscribe_defi_blocks(pattern: MStr<Pattern>, handler: &TypedHandler<Block>) {
     get_message_bus()
         .borrow_mut()
         .router_defi_blocks
         .unsubscribe(pattern, handler);
 }
 
+/// Unsubscribes a handler from DeFi pools.
 #[cfg(feature = "defi")]
-pub fn unsubscribe_defi_pools(
-    pattern: MStr<Pattern>,
-    handler: &TypedHandler<nautilus_model::defi::Pool>, // nautilus-import-ok
-) {
+pub fn unsubscribe_defi_pools(pattern: MStr<Pattern>, handler: &TypedHandler<Pool>) {
     get_message_bus()
         .borrow_mut()
         .router_defi_pools
         .unsubscribe(pattern, handler);
 }
 
+/// Unsubscribes a handler from DeFi pool swaps.
 #[cfg(feature = "defi")]
-pub fn unsubscribe_defi_swaps(
-    pattern: MStr<Pattern>,
-    handler: &TypedHandler<nautilus_model::defi::PoolSwap>, // nautilus-import-ok
-) {
+pub fn unsubscribe_defi_swaps(pattern: MStr<Pattern>, handler: &TypedHandler<PoolSwap>) {
     get_message_bus()
         .borrow_mut()
         .router_defi_swaps
         .unsubscribe(pattern, handler);
 }
 
+/// Unsubscribes a handler from DeFi liquidity updates.
 #[cfg(feature = "defi")]
 pub fn unsubscribe_defi_liquidity(
     pattern: MStr<Pattern>,
-    handler: &TypedHandler<nautilus_model::defi::PoolLiquidityUpdate>, // nautilus-import-ok
+    handler: &TypedHandler<PoolLiquidityUpdate>,
 ) {
     get_message_bus()
         .borrow_mut()
@@ -629,22 +711,18 @@ pub fn unsubscribe_defi_liquidity(
         .unsubscribe(pattern, handler);
 }
 
+/// Unsubscribes a handler from DeFi fee collects.
 #[cfg(feature = "defi")]
-pub fn unsubscribe_defi_collects(
-    pattern: MStr<Pattern>,
-    handler: &TypedHandler<nautilus_model::defi::PoolFeeCollect>, // nautilus-import-ok
-) {
+pub fn unsubscribe_defi_collects(pattern: MStr<Pattern>, handler: &TypedHandler<PoolFeeCollect>) {
     get_message_bus()
         .borrow_mut()
         .router_defi_collects
         .unsubscribe(pattern, handler);
 }
 
+/// Unsubscribes a handler from DeFi flash loans.
 #[cfg(feature = "defi")]
-pub fn unsubscribe_defi_flash(
-    pattern: MStr<Pattern>,
-    handler: &TypedHandler<nautilus_model::defi::PoolFlash>, // nautilus-import-ok
-) {
+pub fn unsubscribe_defi_flash(pattern: MStr<Pattern>, handler: &TypedHandler<PoolFlash>) {
     get_message_bus()
         .borrow_mut()
         .router_defi_flash
@@ -655,19 +733,20 @@ pub fn unsubscribe_defi_flash(
 pub fn unsubscribe_any(pattern: MStr<Pattern>, handler: ShareableMessageHandler) {
     log::debug!("Unsubscribing {handler:?} from pattern '{pattern}'");
 
-    let sub = core::Subscription::new(pattern, handler, None);
+    let handler_id = handler.0.id();
+    let bus_rc = get_message_bus();
+    let mut bus = bus_rc.borrow_mut();
 
-    get_message_bus()
-        .borrow_mut()
-        .topics
-        .values_mut()
-        .for_each(|subs| {
-            if let Ok(index) = subs.binary_search(&sub) {
-                subs.remove(index);
-            }
-        });
+    let count_before = bus.subscriptions.len();
 
-    let removed = get_message_bus().borrow_mut().subscriptions.remove(&sub);
+    bus.topics.values_mut().for_each(|subs| {
+        subs.retain(|s| !(s.pattern == pattern && s.handler_id == handler_id));
+    });
+
+    bus.subscriptions
+        .retain(|s| !(s.pattern == pattern && s.handler_id == handler_id));
+
+    let removed = bus.subscriptions.len() < count_before;
 
     if removed {
         log::debug!("Handler for pattern '{pattern}' was removed");
@@ -683,10 +762,12 @@ pub fn is_subscribed_any<T: AsRef<str>>(pattern: T, handler: ShareableMessageHan
     get_message_bus().borrow().subscriptions.contains(&sub)
 }
 
+/// Returns the count of Any-based subscriptions for a topic.
 pub fn subscriptions_count_any<S: AsRef<str>>(topic: S) -> usize {
     get_message_bus().borrow().subscriptions_count(topic)
 }
 
+/// Returns the subscriber count for order book deltas on a topic.
 pub fn subscriber_count_deltas(topic: MStr<Topic>) -> usize {
     get_message_bus()
         .borrow()
@@ -694,6 +775,7 @@ pub fn subscriber_count_deltas(topic: MStr<Topic>) -> usize {
         .subscriber_count(topic)
 }
 
+/// Returns the subscriber count for order book depth10 on a topic.
 pub fn subscriber_count_depth10(topic: MStr<Topic>) -> usize {
     get_message_bus()
         .borrow()
@@ -701,6 +783,7 @@ pub fn subscriber_count_depth10(topic: MStr<Topic>) -> usize {
         .subscriber_count(topic)
 }
 
+/// Returns the subscriber count for order book snapshots on a topic.
 pub fn subscriber_count_book_snapshots(topic: MStr<Topic>) -> usize {
     get_message_bus()
         .borrow()
@@ -710,201 +793,231 @@ pub fn subscriber_count_book_snapshots(topic: MStr<Topic>) -> usize {
 
 /// Publishes a message to the topic using runtime type dispatch (Any).
 pub fn publish_any(topic: MStr<Topic>, message: &dyn Any) {
-    let matching_subs = get_message_bus()
-        .borrow_mut()
-        .inner_matching_subscriptions(topic);
+    // SAFETY: Take buffer (re-entrancy safe)
+    let mut handlers = ANY_HANDLERS.with_borrow_mut(std::mem::take);
 
-    for sub in matching_subs {
-        sub.handler.0.handle(message);
+    get_message_bus()
+        .borrow_mut()
+        .fill_matching_any_handlers(topic, &mut handlers);
+
+    for handler in &handlers {
+        handler.0.handle(message);
     }
+
+    handlers.clear(); // Release refs before restore
+    ANY_HANDLERS.with_borrow_mut(|buf| *buf = handlers);
 }
 
-pub fn publish_quote(topic: MStr<Topic>, quote: &QuoteTick) {
-    get_message_bus()
-        .borrow_mut()
-        .router_quotes
-        .publish(topic, quote);
+/// Publishes a message to typed handlers using thread-local buffer reuse.
+///
+/// The `fill_fn` receives a mutable reference to the MessageBus, avoiding
+/// redundant TLS access and Rc clone/drop overhead per publish.
+///
+/// # Invariants
+///
+/// - `fill_fn` must not call any publish path (would panic from RefCell double-borrow).
+/// - Handler panics drop the buffer, losing reuse optimization (acceptable as panics are fatal).
+#[inline]
+fn publish_typed<T: 'static>(
+    tls: &'static LocalKey<RefCell<SmallVec<[TypedHandler<T>; HANDLER_BUFFER_CAP]>>>,
+    fill_fn: impl FnOnce(&mut MessageBus, &mut SmallVec<[TypedHandler<T>; HANDLER_BUFFER_CAP]>),
+    message: &T,
+) {
+    // SAFETY: Take buffer (re-entrancy safe)
+    let mut handlers = tls.with_borrow_mut(std::mem::take);
+
+    // Borrow scope ends before dispatch to support re-entrant publishes
+    MESSAGE_BUS.with(|cell| {
+        let rc = cell.get_or_init(|| Rc::new(RefCell::new(MessageBus::default())));
+        fill_fn(&mut rc.borrow_mut(), &mut handlers);
+    });
+
+    for handler in &handlers {
+        handler.handle(message);
+    }
+
+    handlers.clear(); // Release refs before restore
+    tls.with_borrow_mut(|buf| *buf = handlers);
 }
 
-pub fn publish_trade(topic: MStr<Topic>, trade: &TradeTick) {
-    get_message_bus()
-        .borrow_mut()
-        .router_trades
-        .publish(topic, trade);
-}
-
-pub fn publish_bar(topic: MStr<Topic>, bar: &Bar) {
-    get_message_bus()
-        .borrow_mut()
-        .router_bars
-        .publish(topic, bar);
-}
-
+/// Publishes order book deltas to subscribers on a topic.
 pub fn publish_deltas(topic: MStr<Topic>, deltas: &OrderBookDeltas) {
-    get_message_bus()
-        .borrow_mut()
-        .router_deltas
-        .publish(topic, deltas);
+    publish_typed(
+        &DELTAS_HANDLERS,
+        |bus, h| bus.router_deltas.fill_matching_handlers(topic, h),
+        deltas,
+    );
 }
 
+/// Publishes order book depth10 to subscribers on a topic.
 pub fn publish_depth10(topic: MStr<Topic>, depth: &OrderBookDepth10) {
-    get_message_bus()
-        .borrow_mut()
-        .router_depth10
-        .publish(topic, depth);
+    publish_typed(
+        &DEPTH10_HANDLERS,
+        |bus, h| bus.router_depth10.fill_matching_handlers(topic, h),
+        depth,
+    );
 }
 
-pub fn publish_order_event(topic: MStr<Topic>, event: &OrderEventAny) {
-    get_message_bus()
-        .borrow_mut()
-        .router_order_events
-        .publish(topic, event);
+/// Publishes an order book snapshot to subscribers on a topic.
+pub fn publish_book(topic: MStr<Topic>, book: &OrderBook) {
+    publish_typed(
+        &BOOK_HANDLERS,
+        |bus, h| bus.router_book_snapshots.fill_matching_handlers(topic, h),
+        book,
+    );
 }
 
-pub fn publish_position_event(topic: MStr<Topic>, event: &PositionEvent) {
-    get_message_bus()
-        .borrow_mut()
-        .router_position_events
-        .publish(topic, event);
+/// Publishes a quote tick to subscribers on a topic.
+pub fn publish_quote(topic: MStr<Topic>, quote: &QuoteTick) {
+    publish_typed(
+        &QUOTE_HANDLERS,
+        |bus, h| bus.router_quotes.fill_matching_handlers(topic, h),
+        quote,
+    );
 }
 
-pub fn publish_account_state(topic: MStr<Topic>, state: &AccountState) {
-    get_message_bus()
-        .borrow_mut()
-        .router_account_state
-        .publish(topic, state);
+/// Publishes a trade tick to subscribers on a topic.
+pub fn publish_trade(topic: MStr<Topic>, trade: &TradeTick) {
+    publish_typed(
+        &TRADE_HANDLERS,
+        |bus, h| bus.router_trades.fill_matching_handlers(topic, h),
+        trade,
+    );
 }
 
-pub fn publish_instrument(topic: MStr<Topic>, instrument: &InstrumentAny) {
-    get_message_bus()
-        .borrow_mut()
-        .router_instruments
-        .publish(topic, instrument);
+/// Publishes a bar to subscribers on a topic.
+pub fn publish_bar(topic: MStr<Topic>, bar: &Bar) {
+    publish_typed(
+        &BAR_HANDLERS,
+        |bus, h| bus.router_bars.fill_matching_handlers(topic, h),
+        bar,
+    );
 }
 
+/// Publishes a mark price update to subscribers on a topic.
 pub fn publish_mark_price(topic: MStr<Topic>, mark_price: &MarkPriceUpdate) {
-    get_message_bus()
-        .borrow_mut()
-        .router_mark_prices
-        .publish(topic, mark_price);
+    publish_typed(
+        &MARK_PRICE_HANDLERS,
+        |bus, h| bus.router_mark_prices.fill_matching_handlers(topic, h),
+        mark_price,
+    );
 }
 
+/// Publishes an index price update to subscribers on a topic.
 pub fn publish_index_price(topic: MStr<Topic>, index_price: &IndexPriceUpdate) {
-    get_message_bus()
-        .borrow_mut()
-        .router_index_prices
-        .publish(topic, index_price);
+    publish_typed(
+        &INDEX_PRICE_HANDLERS,
+        |bus, h| bus.router_index_prices.fill_matching_handlers(topic, h),
+        index_price,
+    );
 }
 
+/// Publishes a funding rate update to subscribers on a topic.
 pub fn publish_funding_rate(topic: MStr<Topic>, funding_rate: &FundingRateUpdate) {
-    get_message_bus()
-        .borrow_mut()
-        .router_funding_rates
-        .publish(topic, funding_rate);
+    publish_typed(
+        &FUNDING_RATE_HANDLERS,
+        |bus, h| bus.router_funding_rates.fill_matching_handlers(topic, h),
+        funding_rate,
+    );
 }
 
-pub fn publish_instrument_close(topic: MStr<Topic>, close: &InstrumentClose) {
-    get_message_bus()
-        .borrow_mut()
-        .router_instrument_close
-        .publish(topic, close);
-}
-
-pub fn publish_book_snapshot(topic: MStr<Topic>, book: &OrderBook) {
-    get_message_bus()
-        .borrow_mut()
-        .router_book_snapshots
-        .publish(topic, book);
-}
-
-pub fn publish_order(topic: MStr<Topic>, order: &OrderAny) {
-    get_message_bus()
-        .borrow_mut()
-        .router_orders
-        .publish(topic, order);
-}
-
-pub fn publish_position(topic: MStr<Topic>, position: &Position) {
-    get_message_bus()
-        .borrow_mut()
-        .router_positions
-        .publish(topic, position);
-}
-
+/// Publishes greeks data to subscribers on a topic.
 pub fn publish_greeks(topic: MStr<Topic>, greeks: &GreeksData) {
-    get_message_bus()
-        .borrow_mut()
-        .router_greeks
-        .publish(topic, greeks);
+    publish_typed(
+        &GREEKS_HANDLERS,
+        |bus, h| bus.router_greeks.fill_matching_handlers(topic, h),
+        greeks,
+    );
 }
 
+/// Publishes an account state to subscribers on a topic.
+pub fn publish_account_state(topic: MStr<Topic>, state: &AccountState) {
+    publish_typed(
+        &ACCOUNT_STATE_HANDLERS,
+        |bus, h| bus.router_account_state.fill_matching_handlers(topic, h),
+        state,
+    );
+}
+
+/// Publishes an order event to subscribers on a topic.
+pub fn publish_order_event(topic: MStr<Topic>, event: &OrderEventAny) {
+    publish_typed(
+        &ORDER_EVENT_HANDLERS,
+        |bus, h| bus.router_order_events.fill_matching_handlers(topic, h),
+        event,
+    );
+}
+
+/// Publishes a position event to subscribers on a topic.
+pub fn publish_position_event(topic: MStr<Topic>, event: &PositionEvent) {
+    publish_typed(
+        &POSITION_EVENT_HANDLERS,
+        |bus, h| bus.router_position_events.fill_matching_handlers(topic, h),
+        event,
+    );
+}
+
+/// Publishes a DeFi block to subscribers on a topic.
 #[cfg(feature = "defi")]
-pub fn publish_defi_block(
-    topic: MStr<Topic>,
-    block: &nautilus_model::defi::Block, // nautilus-import-ok
-) {
-    get_message_bus()
-        .borrow_mut()
-        .router_defi_blocks
-        .publish(topic, block);
+pub fn publish_defi_block(topic: MStr<Topic>, block: &Block) {
+    publish_typed(
+        &DEFI_BLOCK_HANDLERS,
+        |bus, h| bus.router_defi_blocks.fill_matching_handlers(topic, h),
+        block,
+    );
 }
 
+/// Publishes a DeFi pool to subscribers on a topic.
 #[cfg(feature = "defi")]
-pub fn publish_defi_pool(
-    topic: MStr<Topic>,
-    pool: &nautilus_model::defi::Pool, // nautilus-import-ok
-) {
-    get_message_bus()
-        .borrow_mut()
-        .router_defi_pools
-        .publish(topic, pool);
+pub fn publish_defi_pool(topic: MStr<Topic>, pool: &Pool) {
+    publish_typed(
+        &DEFI_POOL_HANDLERS,
+        |bus, h| bus.router_defi_pools.fill_matching_handlers(topic, h),
+        pool,
+    );
 }
 
+/// Publishes a DeFi pool swap to subscribers on a topic.
 #[cfg(feature = "defi")]
-pub fn publish_defi_swap(
-    topic: MStr<Topic>,
-    swap: &nautilus_model::defi::PoolSwap, // nautilus-import-ok
-) {
-    get_message_bus()
-        .borrow_mut()
-        .router_defi_swaps
-        .publish(topic, swap);
+pub fn publish_defi_swap(topic: MStr<Topic>, swap: &PoolSwap) {
+    publish_typed(
+        &DEFI_SWAP_HANDLERS,
+        |bus, h| bus.router_defi_swaps.fill_matching_handlers(topic, h),
+        swap,
+    );
 }
 
+/// Publishes a DeFi liquidity update to subscribers on a topic.
 #[cfg(feature = "defi")]
-pub fn publish_defi_liquidity(
-    topic: MStr<Topic>,
-    update: &nautilus_model::defi::PoolLiquidityUpdate, // nautilus-import-ok
-) {
-    get_message_bus()
-        .borrow_mut()
-        .router_defi_liquidity
-        .publish(topic, update);
+pub fn publish_defi_liquidity(topic: MStr<Topic>, update: &PoolLiquidityUpdate) {
+    publish_typed(
+        &DEFI_LIQUIDITY_HANDLERS,
+        |bus, h| bus.router_defi_liquidity.fill_matching_handlers(topic, h),
+        update,
+    );
 }
 
+/// Publishes a DeFi fee collect to subscribers on a topic.
 #[cfg(feature = "defi")]
-pub fn publish_defi_collect(
-    topic: MStr<Topic>,
-    collect: &nautilus_model::defi::PoolFeeCollect, // nautilus-import-ok
-) {
-    get_message_bus()
-        .borrow_mut()
-        .router_defi_collects
-        .publish(topic, collect);
+pub fn publish_defi_collect(topic: MStr<Topic>, collect: &PoolFeeCollect) {
+    publish_typed(
+        &DEFI_COLLECT_HANDLERS,
+        |bus, h| bus.router_defi_collects.fill_matching_handlers(topic, h),
+        collect,
+    );
 }
 
+/// Publishes a DeFi flash loan to subscribers on a topic.
 #[cfg(feature = "defi")]
-pub fn publish_defi_flash(
-    topic: MStr<Topic>,
-    flash: &nautilus_model::defi::PoolFlash, // nautilus-import-ok
-) {
-    get_message_bus()
-        .borrow_mut()
-        .router_defi_flash
-        .publish(topic, flash);
+pub fn publish_defi_flash(topic: MStr<Topic>, flash: &PoolFlash) {
+    publish_typed(
+        &DEFI_FLASH_HANDLERS,
+        |bus, h| bus.router_defi_flash.fill_matching_handlers(topic, h),
+        flash,
+    );
 }
 
-/// Sends a message to an endpoint using runtime type dispatch (Any).
+/// Sends a message to an endpoint handler using runtime type dispatch (Any).
 pub fn send_any(endpoint: MStr<Endpoint>, message: &dyn Any) {
     let handler = get_message_bus().borrow().get_endpoint(endpoint).cloned();
     if let Some(handler) = handler {
@@ -946,32 +1059,74 @@ pub fn send_response(correlation_id: &UUID4, message: &DataResponse) {
     }
 }
 
+/// Sends a quote tick to an endpoint handler.
 pub fn send_quote(endpoint: MStr<Endpoint>, quote: &QuoteTick) {
-    get_message_bus()
+    let handler = get_message_bus()
         .borrow()
         .endpoints_quotes
-        .send(endpoint, quote);
+        .get(endpoint)
+        .cloned();
+    if let Some(handler) = handler {
+        handler.handle(quote);
+    } else {
+        log::error!("send_quote: no registered endpoint '{endpoint}'");
+    }
 }
 
+/// Sends a trade tick to an endpoint handler.
 pub fn send_trade(endpoint: MStr<Endpoint>, trade: &TradeTick) {
-    get_message_bus()
+    let handler = get_message_bus()
         .borrow()
         .endpoints_trades
-        .send(endpoint, trade);
+        .get(endpoint)
+        .cloned();
+    if let Some(handler) = handler {
+        handler.handle(trade);
+    } else {
+        log::error!("send_trade: no registered endpoint '{endpoint}'");
+    }
 }
 
+/// Sends a bar to an endpoint handler.
 pub fn send_bar(endpoint: MStr<Endpoint>, bar: &Bar) {
-    get_message_bus()
+    let handler = get_message_bus()
         .borrow()
         .endpoints_bars
-        .send(endpoint, bar);
+        .get(endpoint)
+        .cloned();
+    if let Some(handler) = handler {
+        handler.handle(bar);
+    } else {
+        log::error!("send_bar: no registered endpoint '{endpoint}'");
+    }
 }
 
+/// Sends an order event to an endpoint handler.
 pub fn send_order_event(endpoint: MStr<Endpoint>, event: &OrderEventAny) {
-    get_message_bus()
+    let handler = get_message_bus()
         .borrow()
         .endpoints_order_events
-        .send(endpoint, event);
+        .get(endpoint)
+        .cloned();
+    if let Some(handler) = handler {
+        handler.handle(event);
+    } else {
+        log::error!("send_order_event: no registered endpoint '{endpoint}'");
+    }
+}
+
+/// Sends an account state to an endpoint handler.
+pub fn send_account_state(endpoint: MStr<Endpoint>, state: &AccountState) {
+    let handler = get_message_bus()
+        .borrow()
+        .endpoints_account_state
+        .get(endpoint)
+        .cloned();
+    if let Some(handler) = handler {
+        handler.handle(state);
+    } else {
+        log::error!("send_account_state: no registered endpoint '{endpoint}'");
+    }
 }
 
 #[cfg(test)]
@@ -1051,7 +1206,7 @@ mod tests {
             received_clone.borrow_mut().push(deltas.clone());
         });
 
-        subscribe_deltas("data.book.deltas.*".into(), handler, None);
+        subscribe_book_deltas("data.book.deltas.*".into(), handler, None);
 
         let instrument_id = InstrumentId::from("TEST.VENUE");
         let delta = OrderBookDelta::clear(instrument_id, 0, 1.into(), 2.into());

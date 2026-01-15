@@ -4052,6 +4052,9 @@ class OrderBook:
     def midpoint(self) -> float | None: ...
     def get_avg_px_for_quantity(self, qty: Quantity, order_side: OrderSide) -> float: ...
     def get_quantity_for_price(self, price: Price, order_side: OrderSide) -> float: ...
+    def get_quantity_at_level(
+        self, price: Price, order_side: OrderSide, size_precision: int
+    ) -> Quantity: ...
     def simulate_fills(self, order: BookOrder) -> list[tuple[Price, Quantity]]: ...
     def pprint(self, num_levels: int = 3, group_size: Decimal | None = None) -> str: ...
 
@@ -6898,6 +6901,26 @@ class DeribitHttpClient:
         depth: int | None = None,
     ) -> OrderBook: ...
     async def request_account_state(self, account_id: AccountId) -> AccountState: ...
+    async def request_order_status_reports(
+        self,
+        account_id: AccountId,
+        instrument_id: InstrumentId | None = None,
+        start: int | None = None,
+        end: int | None = None,
+        open_only: bool = False,
+    ) -> list[OrderStatusReport]: ...
+    async def request_fill_reports(
+        self,
+        account_id: AccountId,
+        instrument_id: InstrumentId | None = None,
+        start: int | None = None,
+        end: int | None = None,
+    ) -> list[FillReport]: ...
+    async def request_position_status_reports(
+        self,
+        account_id: AccountId,
+        instrument_id: InstrumentId | None = None,
+    ) -> list[PositionStatusReport]: ...
 
 class DeribitWebSocketClient:
     def __init__(

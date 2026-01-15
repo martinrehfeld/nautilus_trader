@@ -20,8 +20,10 @@ Released on TBD (UTC).
 - Fixed `CVec::empty()` to use dangling pointer instead of null, avoiding undefined behavior in `Vec::from_raw_parts`
 
 ### Fixes
-- Fixed trade execution fills discarded with `liquidity_consumption`
+- Fixed matching engine liquidity consumption using cumulative book quantity
+- Fixed matching engine trade execution fills discarded with `liquidity_consumption`
 - Fixed `ExecAlgorithm` spawn quantity accounting (will now restore quantity from denied/rejected spawned orders)
+- Fixed reconciliation `venue_order_id` indexing and validation
 - Fixed analyzer epoch timestamp from empty shell positions
 - Fixed backtest clock monotonicity with time alerts (#3384), thanks @draphi
 - Fixed order updated panic during reconciliation (#3380), thanks for reporting @santivazq
@@ -47,6 +49,7 @@ Released on TBD (UTC).
 - Added Binance `listenKeyExpired` event handling (#3387), thanks @Johnkhk
 - Added Deribit data client (#3368), thanks @filipmacek
 - Added Deribit order submission (#3408), thanks @filipmacek
+- Added Deribit live reconciliation support (#3421), thanks @filipmacek
 - Added Polymarket data loader rate limiting
 - Refactored computation of greeks (#3393), thanks @faysou
 - Refactored `TearsheetConfig.charts` to chart objects (removed `chart_args`) (#3398), thanks @KaulSe
@@ -61,6 +64,8 @@ Released on TBD (UTC).
 - Refined greeks safeguards and docs (#3407), thanks @faysou
 - Refined processing of gaps in aggregated historical bars (#3412), thanks @faysou
 - Removed `tracing` crate from Rust codebase, migrated to `log` crate for simpler logging
+- Optimized message bus publish with thread-local `SmallVec` buffers in Rust
+- Optimized message bus pattern matching with greedy algorithm
 - Upgraded Cap'n Proto to v1.3.0
 - Upgraded Cython to v3.2.4
 - Upgraded `capnp` and `capnpc` crates to v0.25.0

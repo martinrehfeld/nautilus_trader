@@ -98,16 +98,16 @@ use matching::is_matching_backtracking;
 use nautilus_core::{UUID4, correctness::FAILED};
 use nautilus_model::{
     data::{
-        Bar, FundingRateUpdate, GreeksData, IndexPriceUpdate, InstrumentClose, MarkPriceUpdate,
-        OrderBookDeltas, OrderBookDepth10, QuoteTick, TradeTick,
+        Bar, FundingRateUpdate, GreeksData, IndexPriceUpdate, MarkPriceUpdate, OrderBookDeltas,
+        OrderBookDepth10, QuoteTick, TradeTick,
     },
     events::{AccountState, OrderEventAny, PositionEvent},
     identifiers::TraderId,
-    instruments::InstrumentAny,
     orderbook::OrderBook,
     orders::OrderAny,
     position::Position,
 };
+use smallvec::SmallVec;
 use switchboard::MessagingSwitchboard;
 use ustr::Ustr;
 
@@ -226,12 +226,10 @@ pub struct MessageBus {
     pub(crate) router_bars: TopicRouter<Bar>,
     pub(crate) router_deltas: TopicRouter<OrderBookDeltas>,
     pub(crate) router_depth10: TopicRouter<OrderBookDepth10>,
-    pub(crate) router_instruments: TopicRouter<InstrumentAny>,
+    pub(crate) router_book_snapshots: TopicRouter<OrderBook>,
     pub(crate) router_mark_prices: TopicRouter<MarkPriceUpdate>,
     pub(crate) router_index_prices: TopicRouter<IndexPriceUpdate>,
     pub(crate) router_funding_rates: TopicRouter<FundingRateUpdate>,
-    pub(crate) router_instrument_close: TopicRouter<InstrumentClose>,
-    pub(crate) router_book_snapshots: TopicRouter<OrderBook>,
     pub(crate) router_order_events: TopicRouter<OrderEventAny>,
     pub(crate) router_position_events: TopicRouter<PositionEvent>,
     pub(crate) router_account_state: TopicRouter<AccountState>,
@@ -254,6 +252,7 @@ pub struct MessageBus {
     pub(crate) endpoints_trades: EndpointMap<TradeTick>,
     pub(crate) endpoints_bars: EndpointMap<Bar>,
     pub(crate) endpoints_order_events: EndpointMap<OrderEventAny>,
+    pub(crate) endpoints_account_state: EndpointMap<AccountState>,
     routers_typed: AHashMap<TypeId, Box<dyn Any>>,
     endpoints_typed: AHashMap<TypeId, Box<dyn Any>>,
 }
@@ -289,12 +288,10 @@ impl MessageBus {
             router_bars: TopicRouter::new(),
             router_deltas: TopicRouter::new(),
             router_depth10: TopicRouter::new(),
-            router_instruments: TopicRouter::new(),
+            router_book_snapshots: TopicRouter::new(),
             router_mark_prices: TopicRouter::new(),
             router_index_prices: TopicRouter::new(),
             router_funding_rates: TopicRouter::new(),
-            router_instrument_close: TopicRouter::new(),
-            router_book_snapshots: TopicRouter::new(),
             router_order_events: TopicRouter::new(),
             router_position_events: TopicRouter::new(),
             router_account_state: TopicRouter::new(),
@@ -317,6 +314,7 @@ impl MessageBus {
             endpoints_trades: EndpointMap::new(),
             endpoints_bars: EndpointMap::new(),
             endpoints_order_events: EndpointMap::new(),
+            endpoints_account_state: EndpointMap::new(),
             routers_typed: AHashMap::new(),
             endpoints_typed: AHashMap::new(),
         }
@@ -488,6 +486,28 @@ impl MessageBus {
             self.topics.insert(topic, matches.clone());
             matches
         })
+    }
+
+    /// Fills a buffer with handlers matching a topic.
+    pub(crate) fn fill_matching_any_handlers(
+        &mut self,
+        topic: MStr<Topic>,
+        buf: &mut SmallVec<[ShareableMessageHandler; 64]>,
+    ) {
+        if let Some(subs) = self.topics.get(&topic) {
+            for sub in subs {
+                buf.push(sub.handler.clone());
+            }
+        } else {
+            let mut matches = self.find_topic_matches(topic);
+            matches.sort();
+
+            for sub in &matches {
+                buf.push(sub.handler.clone());
+            }
+
+            self.topics.insert(topic, matches);
+        }
     }
 
     /// Registers a response handler for a specific correlation ID.
