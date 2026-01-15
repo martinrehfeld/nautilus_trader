@@ -1,0 +1,55 @@
+{
+    "build": {
+        "dockerfile": "./Dockerfile",
+        "context": ".",
+        "args": {
+            "VARIANT": "3.13"
+        }
+    },
+
+    "runArgs": [
+    ],
+
+    "features": {
+        "ghcr.io/devcontainers/features/common-utils:2":{
+            "installZsh": "true",
+            "username": "vscode",
+            "userUid": "1000",
+            "userGid": "1000",
+            "upgradePackages": "true"
+        },
+        "ghcr.io/devcontainers/features/python:1": "none",
+        "ghcr.io/devcontainers/features/node:1": "none",
+        "ghcr.io/devcontainers/features/git:1": {
+            "version": "latest",
+            "ppa": "false"
+        },
+        "ghcr.io/jsburckhardt/devcontainer-features/uv:1": {},
+        "ghcr.io/jsburckhardt/devcontainer-features/ruff:1": {},
+        "ghcr.io/devcontainers/features/rust:1": {}
+    },
+
+    "customizations": {
+        "vscode": {
+			// Set *default* container specific settings.json values on container create.
+			"settings": {
+				"python.defaultInterpreterPath": "/usr/local/bin/python"
+			},
+            "extensions": [
+                "ms-python.python",
+                "ms-toolsai.jupyter"
+            ]
+        }
+    },
+
+    "workspaceFolder": "/workspace",
+    "workspaceMount": "source=/home/admin/nautilus_trader,target=/workspace,type=bind,consistency=cached",
+
+    "postCreateCommand": "/bin/true",
+    // -> run source /tmp/.env.nautilus_trader in terminal to load environment variables
+    // * make install once to install dependencies
+    // * make build to (re-)build the project
+    
+	// Set `remoteUser` to `root` to connect as root instead. More info: https://aka.ms/vscode-remote/containers/non-root.
+	"remoteUser": "vscode"
+}
