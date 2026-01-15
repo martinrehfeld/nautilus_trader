@@ -31,21 +31,11 @@ from nautilus_trader.common.component import LiveClock
 from nautilus_trader.common.component import MessageBus
 from nautilus_trader.common.enums import LogColor
 from nautilus_trader.core import nautilus_pyo3
-from nautilus_trader.core.datetime import millis_to_nanos
 from nautilus_trader.live.data_client import LiveMarketDataClient
-from nautilus_trader.model.data import Bar
 from nautilus_trader.model.data import BarType
-from nautilus_trader.model.data import QuoteTick
-from nautilus_trader.model.data import TradeTick
-from nautilus_trader.model.enums import AggressorSide
-from nautilus_trader.model.enums import BarAggregation
-from nautilus_trader.model.enums import PriceType
 from nautilus_trader.model.identifiers import ClientId
 from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.model.identifiers import TradeId
 from nautilus_trader.model.identifiers import Venue
-from nautilus_trader.model.objects import Price
-from nautilus_trader.model.objects import Quantity
 
 
 class AlpacaDataClient(LiveMarketDataClient):
@@ -275,6 +265,8 @@ class AlpacaDataClient(LiveMarketDataClient):
     def _handle_trade(self, msg: dict) -> None:
         """Handle trade tick message."""
         try:
+            from nautilus_pyo3.alpaca import parse_trade_tick
+
             symbol = msg["S"]
             instrument_id = InstrumentId.from_str(f"{symbol}.{self.venue}")
             instrument = self._cache.instrument(instrument_id)
@@ -283,15 +275,13 @@ class AlpacaDataClient(LiveMarketDataClient):
                 self._log.warning(f"Instrument not found: {instrument_id}")
                 return
 
-            # Parse trade tick
-            trade_tick = TradeTick(
-                instrument_id=instrument_id,
-                price=Price.from_str(str(msg["p"])),
-                size=Quantity.from_int(msg["s"]),
-                aggressor_side=AggressorSide.NO_AGGRESSOR,
-                trade_id=TradeId(str(msg["i"])),
-                ts_event=millis_to_nanos(self._parse_timestamp(msg["t"])),
-                ts_init=self._clock.timestamp_ns(),
+            # Parse trade tick using Rust
+            trade_tick = parse_trade_tick(
+                msg,
+                instrument_id,
+                instrument.price_precision,
+                instrument.size_precision,
+                self._clock.timestamp_ns(),
             )
 
             self._handle_data(trade_tick)
@@ -302,6 +292,8 @@ class AlpacaDataClient(LiveMarketDataClient):
     def _handle_quote(self, msg: dict) -> None:
         """Handle quote tick message."""
         try:
+            from nautilus_pyo3.alpaca import parse_quote_tick
+
             symbol = msg["S"]
             instrument_id = InstrumentId.from_str(f"{symbol}.{self.venue}")
             instrument = self._cache.instrument(instrument_id)
@@ -310,15 +302,13 @@ class AlpacaDataClient(LiveMarketDataClient):
                 self._log.warning(f"Instrument not found: {instrument_id}")
                 return
 
-            # Parse quote tick
-            quote_tick = QuoteTick(
-                instrument_id=instrument_id,
-                bid_price=Price.from_str(str(msg["bp"])),
-                ask_price=Price.from_str(str(msg["ap"])),
-                bid_size=Quantity.from_int(msg["bs"]),
-                ask_size=Quantity.from_int(msg["as"]),
-                ts_event=millis_to_nanos(self._parse_timestamp(msg["t"])),
-                ts_init=self._clock.timestamp_ns(),
+            # Parse quote tick using Rust
+            quote_tick = parse_quote_tick(
+                msg,
+                instrument_id,
+                instrument.price_precision,
+                instrument.size_precision,
+                self._clock.timestamp_ns(),
             )
 
             self._handle_data(quote_tick)
@@ -329,6 +319,8 @@ class AlpacaDataClient(LiveMarketDataClient):
     def _handle_bar(self, msg: dict) -> None:
         """Handle bar message."""
         try:
+            from nautilus_pyo3.alpaca import create_bar_type, parse_bar
+
             symbol = msg["S"]
             instrument_id = InstrumentId.from_str(f"{symbol}.{self.venue}")
             instrument = self._cache.instrument(instrument_id)
@@ -337,27 +329,16 @@ class AlpacaDataClient(LiveMarketDataClient):
                 self._log.warning(f"Instrument not found: {instrument_id}")
                 return
 
-            # Create bar type (1-MINUTE bars from Alpaca stream)
-            bar_type = BarType(
-                instrument_id=instrument_id,
-                bar_spec=nautilus_pyo3.BarSpecification(
-                    step=1,
-                    aggregation=BarAggregation.MINUTE,
-                    price_type=PriceType.LAST,
-                ),
-                aggregation_source=self.id,
-            )
+            # Create bar type using Rust (1-MINUTE bars from Alpaca stream)
+            bar_type = create_bar_type(instrument_id, "1Min")
 
-            # Parse bar
-            bar = Bar(
-                bar_type=bar_type,
-                open=Price.from_str(str(msg["o"])),
-                high=Price.from_str(str(msg["h"])),
-                low=Price.from_str(str(msg["l"])),
-                close=Price.from_str(str(msg["c"])),
-                volume=Quantity.from_int(msg["v"]),
-                ts_event=millis_to_nanos(self._parse_timestamp(msg["t"])),
-                ts_init=self._clock.timestamp_ns(),
+            # Parse bar using Rust
+            bar = parse_bar(
+                msg,
+                bar_type,
+                instrument.price_precision,
+                instrument.size_precision,
+                self._clock.timestamp_ns(),
             )
 
             self._handle_data(bar)
@@ -365,27 +346,6 @@ class AlpacaDataClient(LiveMarketDataClient):
         except Exception as e:
             self._log.error(f"Error parsing bar: {e}")
 
-    def _parse_timestamp(self, ts_str: str) -> int:
-        """
-        Parse RFC3339 timestamp to milliseconds.
-
-        Parameters
-        ----------
-        ts_str : str
-            RFC3339 timestamp string.
-
-        Returns
-        -------
-        int
-            Timestamp in milliseconds.
-
-        """
-        import datetime
-
-        dt = datetime.datetime.fromisoformat(ts_str.rstrip("Z"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=datetime.UTC)
-        return int(dt.timestamp() * 1000)
 
     async def _subscribe_trade_ticks(self, instrument_id: InstrumentId) -> None:
         """
