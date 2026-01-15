@@ -473,6 +473,7 @@ pub struct OrderLeg {
 ///
 /// Used for generating fill reports.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "python", pyclass(module = "nautilus_pyo3.alpaca"))]
 pub struct AlpacaActivity {
     /// Activity ID.
     pub id: String,

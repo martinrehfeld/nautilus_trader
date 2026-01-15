@@ -59,6 +59,7 @@ from nautilus_trader.model.objects import MarginBalance
 from nautilus_trader.model.objects import Money
 from nautilus_trader.model.objects import Price
 from nautilus_trader.model.objects import Quantity
+from nautilus_pyo3.alpaca import AlpacaOrderRequest
 
 
 class AlpacaExecutionClient(LiveExecutionClient):
@@ -146,14 +147,10 @@ class AlpacaExecutionClient(LiveExecutionClient):
         # Fetch account information
         try:
             account_info = await self._http_client.get_account()
-            self._log.info(f"Account fetched: {account_info['account_number']}", LogColor.GREEN)
+            self._log.info(f"Account fetched: {account_info.account_number}", LogColor.GREEN)
 
             # Generate account state
             await self._generate_account_state(account_info)
-
-            # Fetch open orders and positions
-            await self._generate_order_status_reports()
-            await self._generate_position_status_reports()
 
         except Exception as e:
             self._log.error(f"Error connecting to Alpaca: {e}")
@@ -173,30 +170,36 @@ class AlpacaExecutionClient(LiveExecutionClient):
 
         self._log.info("Disconnected from Alpaca execution services", LogColor.GREEN)
 
-    async def _generate_account_state(self, account_info: dict) -> None:
+    async def _generate_account_state(self, account_info) -> None:
         """
         Generate account state from Alpaca account info.
 
         Parameters
         ----------
-        account_info : dict
+        account_info : AlpacaAccount
             Account information from Alpaca API.
 
         """
         # Parse account balances
-        equity = float(account_info.get("equity", "0"))
-        cash = float(account_info.get("cash", "0"))
-        buying_power = float(account_info.get("buying_power", "0"))
-        initial_margin = float(account_info.get("initial_margin", "0"))
-        maintenance_margin = float(account_info.get("maintenance_margin", "0"))
+        equity = float(account_info.equity)
+        cash = float(account_info.cash)
+        buying_power = float(account_info.buying_power)
+        initial_margin = float(account_info.initial_margin)
+        maintenance_margin = float(account_info.maintenance_margin)
 
         usd = Currency.from_str("USD")
 
+        # Calculate locked amount (equity - cash = margin used in positions)
+        locked = max(0.0, equity - cash)
+
         # Create account balances
+        # total = equity (total account value)
+        # locked = equity - cash (amount tied up in positions)
+        # free = cash (available cash)
         balances = [
             AccountBalance(
                 total=Money(equity, usd),
-                locked=Money(0, usd),
+                locked=Money(locked, usd),
                 free=Money(cash, usd),
             ),
         ]
@@ -206,7 +209,7 @@ class AlpacaExecutionClient(LiveExecutionClient):
             MarginBalance(
                 initial=Money(initial_margin, usd),
                 maintenance=Money(maintenance_margin, usd),
-                currency=usd,
+                instrument_id=None,
             ),
         ]
 
@@ -218,36 +221,62 @@ class AlpacaExecutionClient(LiveExecutionClient):
             ts_event=self._clock.timestamp_ns(),
         )
 
-    async def _generate_order_status_reports(self) -> None:
+    async def generate_order_status_reports(
+        self,
+        command,  # GenerateOrderStatusReports
+    ) -> list[OrderStatusReport]:
         """Generate order status reports for all open orders."""
+        self._log.debug("Requesting OrderStatusReports...")
+        reports: list[OrderStatusReport] = []
+
         try:
             orders = await self._http_client.get_orders(status="open")
 
             for order_data in orders:
                 report = self._parse_order_status_report(order_data)
                 if report:
-                    self._send_order_status_report(report)
+                    reports.append(report)
 
         except Exception as e:
             self._log.error(f"Error generating order status reports: {e}")
 
-    async def _generate_position_status_reports(self) -> None:
+        self._log.debug(f"Generated {len(reports)} OrderStatusReports")
+        return reports
+
+    async def generate_position_status_reports(
+        self,
+        command,  # GeneratePositionStatusReports
+    ) -> list[PositionStatusReport]:
         """Generate position status reports for all open positions."""
+        self._log.debug("Requesting PositionStatusReports...")
+        reports: list[PositionStatusReport] = []
+
         try:
             positions = await self._http_client.get_positions()
 
             for position_data in positions:
                 report = self._parse_position_status_report(position_data)
                 if report:
-                    self._send_position_status_report(report)
+                    reports.append(report)
 
         except Exception as e:
             self._log.error(f"Error generating position status reports: {e}")
 
-    def _parse_order_status_report(self, order_data: dict) -> OrderStatusReport | None:
-        """Parse order data into OrderStatusReport."""
+        self._log.debug(f"Generated {len(reports)} PositionStatusReports")
+        return reports
+
+    def _parse_order_status_report(self, order_data) -> OrderStatusReport | None:
+        """
+        Parse order data into OrderStatusReport.
+
+        Parameters
+        ----------
+        order_data : AlpacaOrder
+            Order data from Alpaca API.
+
+        """
         try:
-            symbol = order_data["symbol"]
+            symbol = order_data.symbol
             instrument_id = InstrumentId.from_str(f"{symbol}.{self.venue}")
 
             # Parse order status
@@ -267,8 +296,8 @@ class AlpacaExecutionClient(LiveExecutionClient):
                 "pending_new": OrderStatus.SUBMITTED,
             }
 
-            venue_order_id = VenueOrderId(order_data["id"])
-            client_order_id = ClientOrderId(order_data.get("client_order_id", order_data["id"]))
+            venue_order_id = VenueOrderId(order_data.id)
+            client_order_id = ClientOrderId(order_data.client_order_id or order_data.id)
 
             # Track order mapping
             self._client_order_id_to_venue_order_id[client_order_id] = venue_order_id
@@ -279,16 +308,16 @@ class AlpacaExecutionClient(LiveExecutionClient):
                 instrument_id=instrument_id,
                 client_order_id=client_order_id,
                 venue_order_id=venue_order_id,
-                order_side=OrderSide.BUY if order_data["side"] == "buy" else OrderSide.SELL,
-                order_type=self._parse_order_type(order_data["type"]),
-                time_in_force=self._parse_time_in_force(order_data["time_in_force"]),
-                order_status=status_map.get(order_data["status"], OrderStatus.ACCEPTED),
-                quantity=Quantity.from_str(order_data["qty"]),
-                filled_qty=Quantity.from_str(order_data.get("filled_qty", "0")),
-                price=Price.from_str(order_data["limit_price"]) if order_data.get("limit_price") else None,
+                order_side=OrderSide.BUY if order_data.side == "buy" else OrderSide.SELL,
+                order_type=self._parse_order_type(order_data.order_type),
+                time_in_force=self._parse_time_in_force(order_data.time_in_force),
+                order_status=status_map.get(order_data.status, OrderStatus.ACCEPTED),
+                quantity=Quantity.from_str(order_data.qty or "0"),
+                filled_qty=Quantity.from_str(order_data.filled_qty or "0"),
+                price=Price.from_str(order_data.limit_price) if order_data.limit_price else None,
                 report_id=nautilus_pyo3.UUID4(),
-                ts_accepted=millis_to_nanos(self._parse_timestamp_ms(order_data["created_at"])),
-                ts_last=millis_to_nanos(self._parse_timestamp_ms(order_data["updated_at"])),
+                ts_accepted=millis_to_nanos(self._parse_timestamp_ms(order_data.created_at)),
+                ts_last=millis_to_nanos(self._parse_timestamp_ms(order_data.updated_at)),
                 ts_init=self._clock.timestamp_ns(),
             )
 
@@ -296,13 +325,21 @@ class AlpacaExecutionClient(LiveExecutionClient):
             self._log.error(f"Error parsing order status report: {e}")
             return None
 
-    def _parse_position_status_report(self, position_data: dict) -> PositionStatusReport | None:
-        """Parse position data into PositionStatusReport."""
+    def _parse_position_status_report(self, position_data) -> PositionStatusReport | None:
+        """
+        Parse position data into PositionStatusReport.
+
+        Parameters
+        ----------
+        position_data : AlpacaPosition
+            Position data from Alpaca API.
+
+        """
         try:
-            symbol = position_data["symbol"]
+            symbol = position_data.symbol
             instrument_id = InstrumentId.from_str(f"{symbol}.{self.venue}")
 
-            qty = float(position_data["qty"])
+            qty = float(position_data.qty)
             side = OrderSide.BUY if qty > 0 else OrderSide.SELL
             abs_qty = abs(qty)
 
@@ -319,6 +356,105 @@ class AlpacaExecutionClient(LiveExecutionClient):
         except Exception as e:
             self._log.error(f"Error parsing position status report: {e}")
             return None
+
+    async def generate_fill_reports(
+        self,
+        command,  # GenerateFillReports
+    ) -> list[FillReport]:
+        """
+        Generate fill reports from Alpaca account activities.
+
+        Parameters
+        ----------
+        command : GenerateFillReports
+            The command with optional start/end times and instrument filter.
+
+        Returns
+        -------
+        list[FillReport]
+            List of fill reports for trade activities.
+
+        """
+        from nautilus_trader.model.objects import Money
+
+        self._log.debug("Requesting FillReports...")
+        reports: list[FillReport] = []
+
+        try:
+            # Build time filter parameters (RFC3339 format)
+            after = command.start.isoformat() if command.start else None
+            until = command.end.isoformat() if command.end else None
+
+            # Fetch FILL activities from Alpaca
+            activities = await self._http_client.get_activities(
+                activity_types="FILL",
+                after=after,
+                until=until,
+                page_size=500,
+            )
+
+            for activity in activities:
+                # Skip non-fill activities
+                if activity.activity_type != "FILL":
+                    continue
+
+                # Skip if symbol is missing
+                if not activity.symbol:
+                    self._log.warning(f"No symbol for activity {activity.id}")
+                    continue
+
+                # Filter by instrument if specified
+                if command.instrument_id is not None:
+                    instrument_id = self._get_cached_instrument_id(activity.symbol)
+                    if instrument_id != command.instrument_id:
+                        continue
+                else:
+                    instrument_id = self._get_cached_instrument_id(activity.symbol)
+
+                # Parse fill report
+                try:
+                    order_side = OrderSide.BUY if activity.side == "buy" else OrderSide.SELL
+                    last_qty = float(activity.qty) if activity.qty else 0.0
+                    last_px = float(activity.price) if activity.price else 0.0
+
+                    # Use order_id as venue_order_id, activity id as trade_id
+                    venue_order_id = VenueOrderId(activity.order_id) if activity.order_id else None
+
+                    # Look up client_order_id from mapping
+                    client_order_id = None
+                    if venue_order_id:
+                        client_order_id = self._venue_order_id_to_client_order_id.get(venue_order_id)
+
+                    report = FillReport(
+                        account_id=self.account_id,
+                        instrument_id=instrument_id,
+                        venue_order_id=venue_order_id,
+                        client_order_id=client_order_id,
+                        trade_id=TradeId(activity.id),
+                        order_side=order_side,
+                        last_qty=last_qty,
+                        last_px=last_px,
+                        commission=Money(0, self._currency),  # Alpaca doesn't provide commission in activities
+                        liquidity_side=LiquiditySide.NO_LIQUIDITY_SIDE,
+                        report_id=nautilus_pyo3.UUID4(),
+                        ts_event=self._parse_timestamp_ms(activity.transaction_time),
+                        ts_init=self._clock.timestamp_ns(),
+                    )
+
+                    self._log.debug(f"Received {report}")
+                    reports.append(report)
+
+                except Exception as e:
+                    self._log.error(f"Error parsing fill report for activity {activity.id}: {e}")
+                    continue
+
+        except Exception as e:
+            self._log.exception(f"Cannot generate FillReport: {e}")
+            return []
+
+        # Sort by trade_id in ascending order
+        reports = sorted(reports, key=lambda x: x.trade_id.value)
+        return reports
 
     def _position_side_from_qty(self, qty: float):
         """Determine position side from quantity."""
@@ -390,8 +526,8 @@ class AlpacaExecutionClient(LiveExecutionClient):
             # Build order request
             symbol = order.instrument_id.symbol.value
 
-            # Submit order via HTTP
-            response = await self._http_client.submit_order(
+            # Create AlpacaOrderRequest
+            order_request = AlpacaOrderRequest(
                 symbol=symbol,
                 side="buy" if order.side == OrderSide.BUY else "sell",
                 order_type=self._order_type_to_alpaca(order.order_type),
@@ -402,8 +538,11 @@ class AlpacaExecutionClient(LiveExecutionClient):
                 client_order_id=order.client_order_id.value,
             )
 
+            # Submit order via HTTP
+            response = await self._http_client.submit_order(order_request)
+
             # Parse response and generate OrderAccepted event
-            venue_order_id = VenueOrderId(response["id"])
+            venue_order_id = VenueOrderId(response.id)
 
             # Track order mapping
             self._client_order_id_to_venue_order_id[order.client_order_id] = venue_order_id
