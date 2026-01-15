@@ -25,6 +25,7 @@ from nautilus_trader.config import InstrumentProviderConfig
 from nautilus_trader.core import nautilus_pyo3
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.identifiers import Symbol
+from nautilus_trader.model.identifiers import Venue
 from nautilus_trader.model.instruments import CryptoFuture
 from nautilus_trader.model.instruments import CryptoPerpetual
 from nautilus_trader.model.instruments import CurrencyPair
@@ -99,7 +100,7 @@ class AlpacaInstrumentProvider(InstrumentProvider):
                         self.add(instrument)
                 except Exception as e:
                     if self._log_warnings:
-                        self._log.warning(f"Error parsing instrument {asset_data.get('symbol', 'unknown')}: {e}")
+                        self._log.warning(f"Error parsing instrument {asset_data.symbol}: {e}")
 
             self._log.info(f"Loaded {len(self.list_all())} instruments from Alpaca")
 
@@ -155,13 +156,13 @@ class AlpacaInstrumentProvider(InstrumentProvider):
                 self._log.warning(f"Error loading instrument {instrument_id}: {e}")
             raise
 
-    def _parse_instrument(self, asset_data: dict):
+    def _parse_instrument(self, asset_data):
         """
         Parse asset data into a Nautilus instrument.
 
         Parameters
         ----------
-        asset_data : dict
+        asset_data : AlpacaAsset
             Asset data from Alpaca API.
 
         Returns
@@ -171,14 +172,15 @@ class AlpacaInstrumentProvider(InstrumentProvider):
 
         """
         try:
-            asset_class = asset_data.get("class", "").lower()
-            symbol = asset_data["symbol"]
-            name = asset_data.get("name", symbol)
+            # Use getattr to access 'class' property (Python keyword)
+            asset_class = getattr(asset_data, 'class').lower()
+            symbol = asset_data.symbol
+            name = asset_data.name
 
             # Create instrument ID
             instrument_id = InstrumentId(
                 symbol=Symbol(symbol),
-                venue=nautilus_pyo3.ALPACA_VENUE,
+                venue=Venue(nautilus_pyo3.ALPACA_VENUE),
             )
 
             # Common fields
@@ -206,7 +208,7 @@ class AlpacaInstrumentProvider(InstrumentProvider):
                     price_precision=price_precision,
                     price_increment=price_increment,
                     lot_size=lot_size,
-                    isin=asset_data.get("isin"),
+                    isin=None,  # ISIN not provided by Alpaca API
                     margin_init=margin_init,
                     margin_maint=margin_maint,
                     maker_fee=maker_fee,

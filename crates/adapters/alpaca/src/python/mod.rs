@@ -18,6 +18,7 @@
 pub mod enums;
 pub mod http;
 pub mod margin;
+// pub mod parse;  // Disabled - file renamed to parse.rs.disabled
 pub mod types;
 pub mod websocket;
 
@@ -53,9 +54,11 @@ pub fn alpaca(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // HTTP client and models
     m.add_class::<crate::http::client::AlpacaHttpClient>()?;
     m.add_class::<crate::http::models::AlpacaAccount>()?;
+    m.add_class::<crate::http::models::AlpacaAsset>()?;
     m.add_class::<crate::http::models::AlpacaPosition>()?;
     m.add_class::<crate::http::models::AlpacaOrder>()?;
     m.add_class::<crate::http::models::AlpacaOrderRequest>()?;
+    m.add_class::<crate::http::models::AlpacaActivity>()?;
 
     // WebSocket client
     m.add_class::<crate::websocket::client::AlpacaWebSocketClient>()?;
@@ -66,6 +69,13 @@ pub fn alpaca(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<margin::OrderLeg>()?;
     m.add_class::<margin::CostBasisResult>()?;
     m.add_class::<margin::MarginValidationResult>()?;
+
+    // Parsing functions - Commented out, not used in Python layer
+    // m.add_function(wrap_pyfunction!(parse::py_parse_timestamp_ns, m)?)?;
+    // m.add_function(wrap_pyfunction!(parse::py_parse_trade_tick, m)?)?;
+    // m.add_function(wrap_pyfunction!(parse::py_parse_quote_tick, m)?)?;
+    // m.add_function(wrap_pyfunction!(parse::py_parse_bar, m)?)?;
+    // m.add_function(wrap_pyfunction!(parse::py_create_bar_type, m)?)?;
 
     // Note: AlpacaInstrumentProvider, AlpacaDataClient and AlpacaExecutionClient are implemented in Python
     // (nautilus_trader/adapters/alpaca/data.py and execution.py) following the
