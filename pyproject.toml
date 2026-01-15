@@ -26,6 +26,7 @@ requires-python = ">=3.12,<3.15"
 dependencies = [
   "click>=8.0.0,<9.0.0",
   "fsspec>=2025.2.0,<=2026.1.0",
+  "httpx>=0.23.2",
   "msgspec>=0.20.0,<1.0.0",
   "numpy>=1.26.4",
   "pandas>=2.2.3,<3.0.0",
@@ -101,6 +102,9 @@ dev = [
   "ruff==0.14.11", # Pinned to 0.14.11 (keep in line with pre-commit)
   "types-pytz>=2025.2,<2026.0",
   "types-toml>=0.10.2,<1.0.0",
+  "poetry>=2.2.1",
+  "pytest-mock>=3.15.1",
+  "pytest-asyncio>=0.23.8",
 ]
 test = [
   "aiohttp>=3.13.3,<4.0.0",
