@@ -222,9 +222,12 @@ class AlpacaLiveExecClientFactory(LiveExecClientFactory):
             proxy_url=config.proxy_url,
         )
 
+        # Use instrument provider config if provided in exec client config
+        instrument_provider_config = getattr(config, 'instrument_provider', None)
+
         provider = get_cached_alpaca_instrument_provider(
             client=client,
-            config=None,
+            config=instrument_provider_config,
         )
 
         return AlpacaExecutionClient(
