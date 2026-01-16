@@ -122,7 +122,7 @@ class AlpacaDataClient(LiveMarketDataClient):
             api_secret=self._config.api_secret or "",
             asset_class=self._config.asset_class,
             data_feed=self._config.data_feed,
-            url_override=None,
+            url_override=self._config.base_url_ws,
         )
 
         # Create WebSocket config
@@ -143,7 +143,7 @@ class AlpacaDataClient(LiveMarketDataClient):
         # Perform initial authentication
         await self._post_connection()
 
-        self._log.info("Connected to Alpaca data feeds", LogColor.GREEN)
+        self._log.info(f"Connected to Alpaca data feed {alpaca_ws_client.url}", LogColor.GREEN)
 
     async def _disconnect(self) -> None:
         """
@@ -173,7 +173,7 @@ class AlpacaDataClient(LiveMarketDataClient):
             api_secret=self._config.api_secret or "",
             asset_class=self._config.asset_class,
             data_feed=self._config.data_feed,
-            url_override=None,
+            url_override=self._config.base_url_ws,
         )
 
         auth_msg = alpaca_ws_client.auth_message()
