@@ -30,6 +30,7 @@ from nautilus_trader.common.component import MessageBus
 from nautilus_trader.common.enums import LogColor
 from nautilus_trader.core import nautilus_pyo3
 from nautilus_trader.core.datetime import millis_to_nanos
+from nautilus_trader.core.uuid import UUID4
 from nautilus_trader.execution.messages import CancelAllOrders
 from nautilus_trader.execution.messages import CancelOrder
 from nautilus_trader.execution.messages import ModifyOrder
@@ -59,7 +60,7 @@ from nautilus_trader.model.objects import MarginBalance
 from nautilus_trader.model.objects import Money
 from nautilus_trader.model.objects import Price
 from nautilus_trader.model.objects import Quantity
-from nautilus_pyo3.alpaca import AlpacaOrderRequest
+from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaOrderRequest
 
 
 class AlpacaExecutionClient(LiveExecutionClient):
@@ -315,7 +316,7 @@ class AlpacaExecutionClient(LiveExecutionClient):
                 quantity=Quantity.from_str(order_data.qty or "0"),
                 filled_qty=Quantity.from_str(order_data.filled_qty or "0"),
                 price=Price.from_str(order_data.limit_price) if order_data.limit_price else None,
-                report_id=nautilus_pyo3.UUID4(),
+                report_id=UUID4(),
                 ts_accepted=millis_to_nanos(self._parse_timestamp_ms(order_data.created_at)),
                 ts_last=millis_to_nanos(self._parse_timestamp_ms(order_data.updated_at)),
                 ts_init=self._clock.timestamp_ns(),
@@ -348,7 +349,7 @@ class AlpacaExecutionClient(LiveExecutionClient):
                 instrument_id=instrument_id,
                 position_side=self._position_side_from_qty(qty),
                 quantity=Quantity.from_str(str(abs_qty)),
-                report_id=nautilus_pyo3.UUID4(),
+                report_id=UUID4(),
                 ts_last=self._clock.timestamp_ns(),
                 ts_init=self._clock.timestamp_ns(),
             )
@@ -390,7 +391,7 @@ class AlpacaExecutionClient(LiveExecutionClient):
                 activity_types="FILL",
                 after=after,
                 until=until,
-                page_size=500,
+                page_size=100,
             )
 
             for activity in activities:
@@ -414,8 +415,8 @@ class AlpacaExecutionClient(LiveExecutionClient):
                 # Parse fill report
                 try:
                     order_side = OrderSide.BUY if activity.side == "buy" else OrderSide.SELL
-                    last_qty = float(activity.qty) if activity.qty else 0.0
-                    last_px = float(activity.price) if activity.price else 0.0
+                    last_qty = Quantity.from_str(activity.qty) if activity.qty else Quantity.from_str("0")
+                    last_px = Price.from_str(activity.price) if activity.price else Price.from_str("0")
 
                     # Use order_id as venue_order_id, activity id as trade_id
                     venue_order_id = VenueOrderId(activity.order_id) if activity.order_id else None
@@ -425,19 +426,25 @@ class AlpacaExecutionClient(LiveExecutionClient):
                     if venue_order_id:
                         client_order_id = self._venue_order_id_to_client_order_id.get(venue_order_id)
 
+                    # Alpaca activity IDs are in format "timestamp::uuid"
+                    # Extract just the UUID part (max 36 chars) for TradeId
+                    activity_id = activity.id
+                    if "::" in activity_id:
+                        activity_id = activity_id.split("::", 1)[1]  # Get UUID part after "::"
+
                     report = FillReport(
                         account_id=self.account_id,
                         instrument_id=instrument_id,
                         venue_order_id=venue_order_id,
                         client_order_id=client_order_id,
-                        trade_id=TradeId(activity.id),
+                        trade_id=TradeId(activity_id),
                         order_side=order_side,
                         last_qty=last_qty,
                         last_px=last_px,
-                        commission=Money(0, self._currency),  # Alpaca doesn't provide commission in activities
+                        commission=Money(0, self.base_currency),  # Alpaca doesn't provide commission in activities
                         liquidity_side=LiquiditySide.NO_LIQUIDITY_SIDE,
-                        report_id=nautilus_pyo3.UUID4(),
-                        ts_event=self._parse_timestamp_ms(activity.transaction_time),
+                        report_id=UUID4(),
+                        ts_event=millis_to_nanos(self._parse_timestamp_ms(activity.transaction_time)),
                         ts_init=self._clock.timestamp_ns(),
                     )
 
@@ -449,7 +456,7 @@ class AlpacaExecutionClient(LiveExecutionClient):
                     continue
 
         except Exception as e:
-            self._log.exception(f"Cannot generate FillReport: {e}")
+            self._log.exception(f"Cannot generate FillReport: {e}", e)
             return []
 
         # Sort by trade_id in ascending order
@@ -710,3 +717,7 @@ class AlpacaExecutionClient(LiveExecutionClient):
             TimeInForce.FOK: "fok",
         }
         return tif_map.get(tif, "day")
+
+    def _get_cached_instrument_id(self, symbol: str) -> InstrumentId:
+        """Get cached instrument ID from symbol."""
+        return InstrumentId.from_str(f"{symbol}.{self.venue}")
