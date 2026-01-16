@@ -110,6 +110,12 @@ class EMACrossStrategy(Strategy):
         # Subscribe to bars
         self.subscribe_bars(self.bar_type)
 
+        # Subscribe to real-time quotes (bid/ask updates)
+        self.subscribe_quote_ticks(self.instrument_id)
+
+        # Subscribe to real-time trades
+        self.subscribe_trade_ticks(self.instrument_id)
+
         # Request initial instrument
         self.request_instrument(self.instrument_id)
 
@@ -153,6 +159,37 @@ class EMACrossStrategy(Strategy):
 
         # Update cross state
         self.fast_above_slow = fast_now_above
+
+    def on_quote_tick(self, tick):
+        """
+        Handle incoming quote ticks (bid/ask updates).
+
+        Parameters
+        ----------
+        tick : QuoteTick
+            The quote tick received
+        """
+        spread = float(tick.ask_price) - float(tick.bid_price)
+        spread_bps = (spread / float(tick.bid_price)) * 10000 if tick.bid_price > 0 else 0
+        self.log.info(
+            f"📊 QUOTE: Bid ${tick.bid_price} (size: {tick.bid_size}) | "
+            f"Ask ${tick.ask_price} (size: {tick.ask_size}) | "
+            f"Spread: ${spread:.4f} ({spread_bps:.1f} bps)"
+        )
+
+    def on_trade_tick(self, tick):
+        """
+        Handle incoming trade ticks (real-time trades).
+
+        Parameters
+        ----------
+        tick : TradeTick
+            The trade tick received
+        """
+        self.log.info(
+            f"💹 TRADE: ${tick.price} | Size: {tick.size} | "
+            f"Side: {tick.aggressor_side}"
+        )
 
     def _enter_long(self):
         """
@@ -249,7 +286,7 @@ def main():
     config = TradingNodeConfig(
         trader_id=TraderId("ALPACA-EMA-CROSS-001"),
         logging=LoggingConfig(
-            log_level="INFO",
+            log_level="DEBUG",  # Changed to DEBUG to see raw quote messages
             log_colors=True,
         ),
         # Data client configuration

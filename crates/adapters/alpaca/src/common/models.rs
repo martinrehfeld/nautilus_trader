@@ -43,9 +43,9 @@ pub struct AlpacaWsTrade {
     /// Trade price.
     #[serde(rename = "p")]
     pub price: Decimal,
-    /// Trade size (number of shares/units).
+    /// Trade size (number of shares/units). Decimal for crypto fractional amounts.
     #[serde(rename = "s")]
-    pub size: u64,
+    pub size: Decimal,
     /// Trade timestamp (RFC3339 format).
     #[serde(rename = "t")]
     pub timestamp: String,
@@ -74,18 +74,18 @@ pub struct AlpacaWsQuote {
     /// Ask price.
     #[serde(rename = "ap")]
     pub ask_price: Decimal,
-    /// Ask size.
+    /// Ask size. Decimal for crypto fractional amounts.
     #[serde(rename = "as")]
-    pub ask_size: u64,
+    pub ask_size: Decimal,
     /// Bid exchange code.
     #[serde(rename = "bx")]
     pub bid_exchange: Option<String>,
     /// Bid price.
     #[serde(rename = "bp")]
     pub bid_price: Decimal,
-    /// Bid size.
+    /// Bid size. Decimal for crypto fractional amounts.
     #[serde(rename = "bs")]
-    pub bid_size: u64,
+    pub bid_size: Decimal,
     /// Quote timestamp (RFC3339 format).
     #[serde(rename = "t")]
     pub timestamp: String,
@@ -120,9 +120,9 @@ pub struct AlpacaWsBar {
     /// Close price.
     #[serde(rename = "c")]
     pub close: Decimal,
-    /// Volume.
+    /// Volume. Decimal for crypto fractional amounts.
     #[serde(rename = "v")]
-    pub volume: u64,
+    pub volume: Decimal,
     /// Bar start timestamp (RFC3339 format).
     #[serde(rename = "t")]
     pub timestamp: String,

@@ -110,6 +110,19 @@ impl AlpacaWebSocketClient {
         Self::subscribe_bars_message(symbols)
     }
 
+    /// Create a subscription message for orderbooks.
+    ///
+    /// # Arguments
+    ///
+    /// * `symbols` - List of symbols to subscribe to (e.g., ["AAPL", "MSFT"])
+    ///
+    /// Returns a JSON string to send via WebSocket to subscribe to orderbooks.
+    #[staticmethod]
+    #[pyo3(name = "subscribe_orderbooks_message")]
+    fn py_subscribe_orderbooks_message(symbols: Vec<String>) -> String {
+        Self::subscribe_orderbooks_message(symbols)
+    }
+
     /// Create an unsubscription message for trades.
     ///
     /// # Arguments
@@ -147,5 +160,18 @@ impl AlpacaWebSocketClient {
     #[pyo3(name = "unsubscribe_bars_message")]
     fn py_unsubscribe_bars_message(symbols: Vec<String>) -> String {
         Self::unsubscribe_bars_message(symbols)
+    }
+
+    /// Create an unsubscription message for orderbooks.
+    ///
+    /// # Arguments
+    ///
+    /// * `symbols` - List of symbols to unsubscribe from (e.g., ["AAPL", "MSFT"])
+    ///
+    /// Returns a JSON string to send via WebSocket to unsubscribe from orderbooks.
+    #[staticmethod]
+    #[pyo3(name = "unsubscribe_orderbooks_message")]
+    fn py_unsubscribe_orderbooks_message(symbols: Vec<String>) -> String {
+        Self::unsubscribe_orderbooks_message(symbols)
     }
 }
