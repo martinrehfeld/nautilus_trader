@@ -36,7 +36,7 @@ pub struct AlpacaWsTrade {
     pub symbol: String,
     /// Trade ID.
     #[serde(rename = "i")]
-    pub trade_id: Option<u64>,
+    pub trade_id: Option<i64>,
     /// Exchange code where trade occurred.
     #[serde(rename = "x")]
     pub exchange: Option<String>,
@@ -128,7 +128,7 @@ pub struct AlpacaWsBar {
     pub timestamp: String,
     /// Number of trades in bar (optional).
     #[serde(rename = "n")]
-    pub trade_count: Option<u64>,
+    pub trade_count: Option<i64>,
     /// Volume-weighted average price (optional).
     #[serde(rename = "vw")]
     pub vwap: Option<Decimal>,
