@@ -66,28 +66,33 @@ pub struct AlpacaWsSubscribeMessage {
     /// Bar symbols to subscribe to.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub bars: Vec<String>,
+    /// Orderbook symbols to subscribe to.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub orderbooks: Vec<String>,
 }
 
 impl AlpacaWsSubscribeMessage {
     /// Creates a new subscription message.
     #[must_use]
-    pub fn subscribe(trades: Vec<String>, quotes: Vec<String>, bars: Vec<String>) -> Self {
+    pub fn subscribe(trades: Vec<String>, quotes: Vec<String>, bars: Vec<String>, orderbooks: Vec<String>) -> Self {
         Self {
             action: AlpacaWsAction::Subscribe,
             trades,
             quotes,
             bars,
+            orderbooks,
         }
     }
 
     /// Creates a new unsubscription message.
     #[must_use]
-    pub fn unsubscribe(trades: Vec<String>, quotes: Vec<String>, bars: Vec<String>) -> Self {
+    pub fn unsubscribe(trades: Vec<String>, quotes: Vec<String>, bars: Vec<String>, orderbooks: Vec<String>) -> Self {
         Self {
             action: AlpacaWsAction::Unsubscribe,
             trades,
             quotes,
             bars,
+            orderbooks,
         }
     }
 }
@@ -105,6 +110,8 @@ pub enum AlpacaWsMessage {
         trades: Vec<String>,
         quotes: Vec<String>,
         bars: Vec<String>,
+        #[serde(default)]
+        orderbooks: Vec<String>,
     },
     /// Error message.
     #[serde(rename = "error")]
@@ -118,6 +125,9 @@ pub enum AlpacaWsMessage {
     /// Bar data.
     #[serde(rename = "b")]
     Bar(AlpacaWsBar),
+    /// Orderbook data.
+    #[serde(rename = "o")]
+    Orderbook(AlpacaWsOrderbook),
 }
 
 /// Alpaca WebSocket trade message.
@@ -132,8 +142,8 @@ pub struct AlpacaWsTrade {
     pub x: String,
     /// Trade price.
     pub p: f64,
-    /// Trade size.
-    pub s: u64,
+    /// Trade size (f64 for crypto fractional quantities).
+    pub s: f64,
     /// Trade timestamp (RFC3339).
     pub t: String,
     /// Trade conditions.
@@ -153,15 +163,15 @@ pub struct AlpacaWsQuote {
     pub ax: String,
     /// Ask price.
     pub ap: f64,
-    /// Ask size.
+    /// Ask size (f64 for crypto fractional quantities).
     #[serde(rename = "as")]
-    pub ask_size: u64,
+    pub ask_size: f64,
     /// Bid exchange code.
     pub bx: String,
     /// Bid price.
     pub bp: f64,
-    /// Bid size.
-    pub bs: u64,
+    /// Bid size (f64 for crypto fractional quantities).
+    pub bs: f64,
     /// Quote timestamp (RFC3339).
     pub t: String,
     /// Quote conditions.
@@ -195,6 +205,34 @@ pub struct AlpacaWsBar {
     pub vw: f64,
 }
 
+/// Order book price level.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct OrderbookLevel {
+    /// Price level.
+    pub p: f64,
+    /// Size at this price level.
+    pub s: f64,
+}
+
+/// Alpaca WebSocket orderbook message.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AlpacaWsOrderbook {
+    /// Symbol.
+    #[serde(rename = "S")]
+    pub symbol: String,
+    /// Orderbook timestamp (RFC3339).
+    pub t: String,
+    /// Bid levels.
+    #[serde(default)]
+    pub b: Vec<OrderbookLevel>,
+    /// Ask levels.
+    #[serde(default)]
+    pub a: Vec<OrderbookLevel>,
+    /// Reset flag - if true, this is a full orderbook snapshot.
+    #[serde(default)]
+    pub r: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,13 +254,15 @@ mod tests {
             vec!["AAPL".to_string()],
             vec!["MSFT".to_string()],
             vec![],
+            vec![],
         );
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"action\":\"subscribe\""));
         assert!(json.contains("\"trades\":[\"AAPL\"]"));
         assert!(json.contains("\"quotes\":[\"MSFT\"]"));
-        // Empty bars should be skipped
+        // Empty bars and orderbooks should be skipped
         assert!(!json.contains("bars"));
+        assert!(!json.contains("orderbooks"));
     }
 
     #[rstest]

@@ -106,6 +106,7 @@ class AlpacaDataClient(LiveMarketDataClient):
         self._trade_subscriptions: set[str] = set()
         self._quote_subscriptions: set[str] = set()
         self._bar_subscriptions: set[str] = set()
+        self._orderbook_subscriptions: set[str] = set()
 
     async def _connect(self) -> None:
         """
@@ -122,7 +123,7 @@ class AlpacaDataClient(LiveMarketDataClient):
             api_secret=self._config.api_secret or "",
             asset_class=self._config.asset_class,
             data_feed=self._config.data_feed,
-            url_override=None,
+            url_override=self._config.base_url_ws,
         )
 
         # Create WebSocket config
@@ -143,7 +144,7 @@ class AlpacaDataClient(LiveMarketDataClient):
         # Perform initial authentication
         await self._post_connection()
 
-        self._log.info("Connected to Alpaca data feeds", LogColor.GREEN)
+        self._log.info(f"Connected to Alpaca data feed {alpaca_ws_client.url}", LogColor.GREEN)
 
     async def _disconnect(self) -> None:
         """
@@ -173,7 +174,7 @@ class AlpacaDataClient(LiveMarketDataClient):
             api_secret=self._config.api_secret or "",
             asset_class=self._config.asset_class,
             data_feed=self._config.data_feed,
-            url_override=None,
+            url_override=self._config.base_url_ws,
         )
 
         auth_msg = alpaca_ws_client.auth_message()
@@ -198,12 +199,16 @@ class AlpacaDataClient(LiveMarketDataClient):
         if self._bar_subscriptions:
             await self._resubscribe_bars(list(self._bar_subscriptions))
 
+        if self._orderbook_subscriptions:
+            await self._resubscribe_orderbooks(list(self._orderbook_subscriptions))
+
     async def _resubscribe_trades(self, symbols: list[str]) -> None:
         """Resubscribe to trade streams."""
         if not self._ws_client:
             return
 
-        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_trades_message(symbols)
+        normalized_symbols = [self._normalize_symbol(s) for s in symbols]
+        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_trades_message(normalized_symbols)
         await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Resubscribed to trades: {symbols}")
 
@@ -212,7 +217,8 @@ class AlpacaDataClient(LiveMarketDataClient):
         if not self._ws_client:
             return
 
-        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_quotes_message(symbols)
+        normalized_symbols = [self._normalize_symbol(s) for s in symbols]
+        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_quotes_message(normalized_symbols)
         await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Resubscribed to quotes: {symbols}")
 
@@ -221,9 +227,20 @@ class AlpacaDataClient(LiveMarketDataClient):
         if not self._ws_client:
             return
 
-        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_bars_message(symbols)
+        normalized_symbols = [self._normalize_symbol(s) for s in symbols]
+        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_bars_message(normalized_symbols)
         await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Resubscribed to bars: {symbols}")
+
+    async def _resubscribe_orderbooks(self, symbols: list[str]) -> None:
+        """Resubscribe to orderbook streams."""
+        if not self._ws_client:
+            return
+
+        normalized_symbols = [self._normalize_symbol(s) for s in symbols]
+        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_orderbooks_message(normalized_symbols)
+        await self._ws_client.send_text(msg.encode("utf-8"))
+        self._log.info(f"Resubscribed to orderbooks: {symbols}")
 
     def _handle_ws_message(self, raw: bytes) -> None:
         """
@@ -258,6 +275,8 @@ class AlpacaDataClient(LiveMarketDataClient):
                     self._handle_quote(msg)
                 elif msg_type == "b":
                     self._handle_bar(msg)
+                elif msg_type == "o":
+                    self._handle_orderbook(msg)
                 else:
                     self._log.warning(f"Unknown message type: {msg_type}")
 
@@ -267,7 +286,9 @@ class AlpacaDataClient(LiveMarketDataClient):
     def _handle_trade(self, msg: dict) -> None:
         """Handle trade tick message."""
         try:
+            from nautilus_trader.core import nautilus_pyo3
             from nautilus_trader.core.nautilus_pyo3.alpaca import parse_trade_tick
+            from nautilus_trader.model.data import TradeTick
 
             symbol = msg["S"]
             instrument_id = InstrumentId.from_str(f"{symbol}.{self.venue}")
@@ -277,15 +298,20 @@ class AlpacaDataClient(LiveMarketDataClient):
                 self._log.warning(f"Instrument not found: {instrument_id}")
                 return
 
-            # Parse trade tick using Rust
-            trade_tick = parse_trade_tick(
+            # Convert Python InstrumentId to PyO3 InstrumentId
+            pyo3_instrument_id = nautilus_pyo3.InstrumentId.from_str(instrument_id.value)
+
+            # Parse trade tick using Rust (returns PyO3 TradeTick)
+            pyo3_trade_tick = parse_trade_tick(
                 msg,
-                instrument_id,
+                pyo3_instrument_id,
                 instrument.price_precision,
                 instrument.size_precision,
                 self._clock.timestamp_ns(),
             )
 
+            # Convert PyO3 type to Python type
+            trade_tick = TradeTick.from_pyo3(pyo3_trade_tick)
             self._handle_data(trade_tick)
 
         except Exception as e:
@@ -294,7 +320,12 @@ class AlpacaDataClient(LiveMarketDataClient):
     def _handle_quote(self, msg: dict) -> None:
         """Handle quote tick message."""
         try:
+            # Debug: Log the raw quote message
+            self._log.debug(f"Raw quote message: {msg}")
+
+            from nautilus_trader.core import nautilus_pyo3
             from nautilus_trader.core.nautilus_pyo3.alpaca import parse_quote_tick
+            from nautilus_trader.model.data import QuoteTick
 
             symbol = msg["S"]
             instrument_id = InstrumentId.from_str(f"{symbol}.{self.venue}")
@@ -304,15 +335,20 @@ class AlpacaDataClient(LiveMarketDataClient):
                 self._log.warning(f"Instrument not found: {instrument_id}")
                 return
 
-            # Parse quote tick using Rust
-            quote_tick = parse_quote_tick(
+            # Convert Python InstrumentId to PyO3 InstrumentId
+            pyo3_instrument_id = nautilus_pyo3.InstrumentId.from_str(instrument_id.value)
+
+            # Parse quote tick using Rust (returns PyO3 QuoteTick)
+            pyo3_quote_tick = parse_quote_tick(
                 msg,
-                instrument_id,
+                pyo3_instrument_id,
                 instrument.price_precision,
                 instrument.size_precision,
                 self._clock.timestamp_ns(),
             )
 
+            # Convert PyO3 type to Python type
+            quote_tick = QuoteTick.from_pyo3(pyo3_quote_tick)
             self._handle_data(quote_tick)
 
         except Exception as e:
@@ -321,7 +357,9 @@ class AlpacaDataClient(LiveMarketDataClient):
     def _handle_bar(self, msg: dict) -> None:
         """Handle bar message."""
         try:
+            from nautilus_trader.core import nautilus_pyo3
             from nautilus_trader.core.nautilus_pyo3.alpaca import create_bar_type, parse_bar
+            from nautilus_trader.model.data import Bar
 
             symbol = msg["S"]
             instrument_id = InstrumentId.from_str(f"{symbol}.{self.venue}")
@@ -331,11 +369,14 @@ class AlpacaDataClient(LiveMarketDataClient):
                 self._log.warning(f"Instrument not found: {instrument_id}")
                 return
 
-            # Create bar type using Rust (1-MINUTE bars from Alpaca stream)
-            bar_type = create_bar_type(instrument_id, "1Min")
+            # Convert Python InstrumentId to PyO3 InstrumentId
+            pyo3_instrument_id = nautilus_pyo3.InstrumentId.from_str(instrument_id.value)
 
-            # Parse bar using Rust
-            bar = parse_bar(
+            # Create bar type using Rust (1-MINUTE bars from Alpaca stream)
+            bar_type = create_bar_type(pyo3_instrument_id, "1Min")
+
+            # Parse bar using Rust (returns PyO3 Bar)
+            pyo3_bar = parse_bar(
                 msg,
                 bar_type,
                 instrument.price_precision,
@@ -343,11 +384,41 @@ class AlpacaDataClient(LiveMarketDataClient):
                 self._clock.timestamp_ns(),
             )
 
+            # Convert PyO3 type to Python type
+            bar = Bar.from_pyo3(pyo3_bar)
             self._handle_data(bar)
 
         except Exception as e:
             self._log.error(f"Error parsing bar: {e}")
 
+    def _handle_orderbook(self, msg: dict) -> None:
+        """Handle orderbook message."""
+        try:
+            symbol = msg["S"]
+            instrument_id = InstrumentId.from_str(f"{symbol}.{self.venue}")
+
+            # Extract orderbook data
+            bids = msg.get("b", [])
+            asks = msg.get("a", [])
+            reset = msg.get("r", False)
+            timestamp = msg.get("t", "")
+
+            # For now, just log the orderbook data
+            # TODO: Convert to NautilusTrader OrderBookDeltas/OrderBookDepth10
+            self._log.info(
+                f"📖 Orderbook {symbol} ({'RESET' if reset else 'UPDATE'}): "
+                f"{len(bids)} bids, {len(asks)} asks @ {timestamp}"
+            )
+
+            if bids:
+                best_bid = bids[0]
+                self._log.debug(f"  Best bid: ${best_bid['p']} x {best_bid['s']}")
+            if asks:
+                best_ask = asks[0]
+                self._log.debug(f"  Best ask: ${best_ask['p']} x {best_ask['s']}")
+
+        except Exception as e:
+            self._log.error(f"Error handling orderbook: {e}")
 
     async def _subscribe_trade_ticks(self, command) -> None:
         """
@@ -365,9 +436,10 @@ class AlpacaDataClient(LiveMarketDataClient):
 
         instrument_id = command.instrument_id
         symbol = instrument_id.symbol.value
+        normalized_symbol = self._normalize_symbol(symbol)
         self._trade_subscriptions.add(symbol)
 
-        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_trades_message([symbol])
+        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_trades_message([normalized_symbol])
         await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Subscribed to trade ticks: {instrument_id}")
 
@@ -387,11 +459,23 @@ class AlpacaDataClient(LiveMarketDataClient):
 
         instrument_id = command.instrument_id
         symbol = instrument_id.symbol.value
+        normalized_symbol = self._normalize_symbol(symbol)
         self._quote_subscriptions.add(symbol)
 
-        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_quotes_message([symbol])
+        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_quotes_message([normalized_symbol])
         await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Subscribed to quote ticks: {instrument_id}")
+
+    def _normalize_symbol(self, symbol: str) -> str:
+        """
+        Normalize symbol for Alpaca API.
+
+        For crypto: Keep the slash (e.g., BTC/USD stays as BTC/USD)
+        For equities: Remove any slashes (though equities typically don't have slashes)
+        """
+        # Crypto symbols should keep the slash for the crypto WebSocket endpoint
+        # Only equities would need normalization, but they don't have slashes anyway
+        return symbol
 
     async def _subscribe_bars(self, command) -> None:
         """
@@ -409,11 +493,35 @@ class AlpacaDataClient(LiveMarketDataClient):
 
         bar_type = command.bar_type
         symbol = bar_type.instrument_id.symbol.value
+        normalized_symbol = self._normalize_symbol(symbol)
         self._bar_subscriptions.add(symbol)
 
-        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_bars_message([symbol])
+        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_bars_message([normalized_symbol])
         await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Subscribed to bars: {bar_type}")
+
+    async def _subscribe_order_book_deltas(self, command) -> None:
+        """
+        Subscribe to order book deltas for an instrument.
+
+        Parameters
+        ----------
+        command : SubscribeOrderBookDeltas
+            The subscribe order book deltas command.
+
+        """
+        if not self._ws_client:
+            self._log.error("WebSocket client not connected")
+            return
+
+        instrument_id = command.instrument_id
+        symbol = instrument_id.symbol.value
+        normalized_symbol = self._normalize_symbol(symbol)
+        self._orderbook_subscriptions.add(symbol)
+
+        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_orderbooks_message([normalized_symbol])
+        await self._ws_client.send_text(msg.encode("utf-8"))
+        self._log.info(f"Subscribed to orderbook: {instrument_id}")
 
     async def _unsubscribe_trade_ticks(self, command) -> None:
         """Unsubscribe from trade ticks."""
@@ -453,6 +561,19 @@ class AlpacaDataClient(LiveMarketDataClient):
         msg = nautilus_pyo3.AlpacaWebSocketClient.unsubscribe_bars_message([symbol])
         await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Unsubscribed from bars: {bar_type}")
+
+    async def _unsubscribe_order_book_deltas(self, command) -> None:
+        """Unsubscribe from order book deltas."""
+        if not self._ws_client:
+            return
+
+        instrument_id = command.instrument_id
+        symbol = instrument_id.symbol.value
+        self._orderbook_subscriptions.discard(symbol)
+
+        msg = nautilus_pyo3.AlpacaWebSocketClient.unsubscribe_orderbooks_message([symbol])
+        await self._ws_client.send_text(msg.encode("utf-8"))
+        self._log.info(f"Unsubscribed from orderbook: {instrument_id}")
 
     async def _request_instrument(self, request: RequestInstrument) -> None:
         """

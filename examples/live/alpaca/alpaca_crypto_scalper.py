@@ -123,11 +123,47 @@ class CryptoScalperStrategy(Strategy):
         self.log.info(f"Position Size: ${self.position_size_usd}")
         self.log.info(f"Volatility Threshold: {self.volatility_threshold * 100}%")
 
-        # Subscribe to bars
+        # Subscribe to bars for ATR calculation
         self.subscribe_bars(self.bar_type)
+
+        # Subscribe to trade ticks for real-time price updates
+        self.subscribe_trade_ticks(self.instrument_id)
+
+        # Subscribe to quote ticks for bid/ask (order book) updates
+        self.subscribe_quote_ticks(self.instrument_id)
 
         # Request initial instrument
         self.request_instrument(self.instrument_id)
+
+    def on_quote_tick(self, tick):
+        """
+        Handle incoming quote ticks for bid/ask updates.
+
+        Parameters
+        ----------
+        tick : QuoteTick
+            The quote tick received
+        """
+        # Log order book updates
+        spread = float(tick.ask_price) - float(tick.bid_price)
+        spread_bps = (spread / float(tick.bid_price)) * 10000
+        self.log.info(
+            f"📊 Quote: Bid ${tick.bid_price} ({tick.bid_size}) | "
+            f"Ask ${tick.ask_price} ({tick.ask_size}) | "
+            f"Spread: ${spread:.2f} ({spread_bps:.1f} bps)"
+        )
+
+    def on_trade_tick(self, tick):
+        """
+        Handle incoming trade ticks for real-time price updates.
+
+        Parameters
+        ----------
+        tick : TradeTick
+            The trade tick received
+        """
+        # Log real-time trades to show activity
+        self.log.info(f"💹 Trade: ${tick.price} | Size: {tick.size}")
 
     def on_bar(self, bar):
         """
@@ -331,14 +367,14 @@ def main():
     symbol = "BTC/USD"  # Bitcoin - adjust as needed (ETH/USD, DOGE/USD, etc.)
     instrument_id = InstrumentId.from_str(f"{symbol}.{ALPACA_VENUE}")
 
-    # Create bar type (5-minute bars for scalping)
-    bar_type = BarType.from_str(f"{symbol}.{ALPACA_VENUE}-5-MINUTE-LAST-EXTERNAL")
+    # Create bar type (1-minute bars for faster feedback)
+    bar_type = BarType.from_str(f"{symbol}.{ALPACA_VENUE}-1-MINUTE-LAST-EXTERNAL")
 
     # Configure trading node
     config = TradingNodeConfig(
         trader_id=TraderId("ALPACA-CRYPTO-SCALPER-001"),
         logging=LoggingConfig(
-            log_level="INFO",
+            log_level="DEBUG",  # Changed to DEBUG to see type information
             log_colors=True,
         ),
         # Data client configuration
@@ -347,10 +383,10 @@ def main():
                 api_key=api_key,
                 api_secret=api_secret,
                 paper_trading=True,  # Use paper trading (safe)
-                data_feed=AlpacaDataFeed.IEX,  # Crypto uses same feed
+                asset_class=AlpacaAssetClass.Crypto,  # IMPORTANT: Set to Crypto for crypto data
+                data_feed=AlpacaDataFeed.IEX,  # Feed parameter (not used for crypto)
                 instrument_provider=AlpacaInstrumentProviderConfig(
-                    load_all=True,  # Load instruments on startup
-                    asset_classes=frozenset({AlpacaAssetClass.CRYPTO}),
+                    load_ids=frozenset([instrument_id]),  # Load only the instrument we need
                 ),
             ),
         },
@@ -360,10 +396,13 @@ def main():
                 api_key=api_key,
                 api_secret=api_secret,
                 paper_trading=True,  # Use paper trading (safe)
+                instrument_provider=AlpacaInstrumentProviderConfig(
+                    load_ids=frozenset([instrument_id]),  # Load only the instrument we need
+                ),
             ),
         },
         timeout_connection=30.0,
-        timeout_disconnection=10.0,
+        timeout_disconnection=1.0,
     )
 
     # Create strategy
