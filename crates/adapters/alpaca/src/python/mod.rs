@@ -24,7 +24,7 @@ pub mod websocket;
 
 use pyo3::prelude::*;
 
-use crate::common::consts::ALPACA_NAUTILUS_BROKER_ID;
+use crate::common::consts::{ALPACA_NAUTILUS_BROKER_ID, ALPACA_VENUE};
 
 /// Alpaca adapter Python module.
 ///
@@ -34,8 +34,7 @@ use crate::common::consts::ALPACA_NAUTILUS_BROKER_ID;
 pub fn alpaca(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Constants
     m.add(stringify!(ALPACA_NAUTILUS_BROKER_ID), ALPACA_NAUTILUS_BROKER_ID)?;
-    // Add ALPACA_VENUE as an alias for backward compatibility
-    m.add("ALPACA_VENUE", ALPACA_NAUTILUS_BROKER_ID)?;
+    m.add(stringify!(ALPACA_VENUE), ALPACA_VENUE)?;
 
     // Enumerations
     m.add_class::<crate::common::enums::AlpacaEnvironment>()?;

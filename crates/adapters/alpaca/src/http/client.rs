@@ -427,8 +427,17 @@ impl AlpacaHttpClient {
         if let Some(c) = asset_class {
             params.insert("asset_class".to_string(), c.to_string());
         }
-        self.get::<HashMap<String, String>, Vec<AlpacaAsset>>("/v2/assets", Some(&params))
-            .await
+        let assets = self.get::<HashMap<String, String>, Vec<AlpacaAsset>>("/v2/assets", Some(&params))
+            .await?;
+
+        // Filter out unsupported asset classes that Alpaca doesn't actually offer
+        // crypto_perp appears in API responses but is not a real product
+        let filtered_assets: Vec<AlpacaAsset> = assets
+            .into_iter()
+            .filter(|asset| asset.class.to_lowercase() != "crypto_perp")
+            .collect();
+
+        Ok(filtered_assets)
     }
 
     /// Get a specific asset by symbol or ID.

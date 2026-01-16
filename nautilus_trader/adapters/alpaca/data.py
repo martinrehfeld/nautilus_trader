@@ -31,11 +31,13 @@ from nautilus_trader.common.component import LiveClock
 from nautilus_trader.common.component import MessageBus
 from nautilus_trader.common.enums import LogColor
 from nautilus_trader.core import nautilus_pyo3
+from nautilus_trader.data.messages import RequestInstrument
 from nautilus_trader.live.data_client import LiveMarketDataClient
 from nautilus_trader.model.data import BarType
 from nautilus_trader.model.identifiers import ClientId
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.identifiers import Venue
+from nautilus_trader.model.instruments import Instrument
 
 
 class AlpacaDataClient(LiveMarketDataClient):
@@ -265,7 +267,7 @@ class AlpacaDataClient(LiveMarketDataClient):
     def _handle_trade(self, msg: dict) -> None:
         """Handle trade tick message."""
         try:
-            from nautilus_pyo3.alpaca import parse_trade_tick
+            from nautilus_trader.core.nautilus_pyo3.alpaca import parse_trade_tick
 
             symbol = msg["S"]
             instrument_id = InstrumentId.from_str(f"{symbol}.{self.venue}")
@@ -292,7 +294,7 @@ class AlpacaDataClient(LiveMarketDataClient):
     def _handle_quote(self, msg: dict) -> None:
         """Handle quote tick message."""
         try:
-            from nautilus_pyo3.alpaca import parse_quote_tick
+            from nautilus_trader.core.nautilus_pyo3.alpaca import parse_quote_tick
 
             symbol = msg["S"]
             instrument_id = InstrumentId.from_str(f"{symbol}.{self.venue}")
@@ -319,7 +321,7 @@ class AlpacaDataClient(LiveMarketDataClient):
     def _handle_bar(self, msg: dict) -> None:
         """Handle bar message."""
         try:
-            from nautilus_pyo3.alpaca import create_bar_type, parse_bar
+            from nautilus_trader.core.nautilus_pyo3.alpaca import create_bar_type, parse_bar
 
             symbol = msg["S"]
             instrument_id = InstrumentId.from_str(f"{symbol}.{self.venue}")
@@ -347,20 +349,21 @@ class AlpacaDataClient(LiveMarketDataClient):
             self._log.error(f"Error parsing bar: {e}")
 
 
-    async def _subscribe_trade_ticks(self, instrument_id: InstrumentId) -> None:
+    async def _subscribe_trade_ticks(self, command) -> None:
         """
         Subscribe to trade ticks for an instrument.
 
         Parameters
         ----------
-        instrument_id : InstrumentId
-            The instrument ID to subscribe to.
+        command : SubscribeTradeTicks
+            The subscribe trade ticks command.
 
         """
         if not self._ws_client:
             self._log.error("WebSocket client not connected")
             return
 
+        instrument_id = command.instrument_id
         symbol = instrument_id.symbol.value
         self._trade_subscriptions.add(symbol)
 
@@ -368,20 +371,21 @@ class AlpacaDataClient(LiveMarketDataClient):
         await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Subscribed to trade ticks: {instrument_id}")
 
-    async def _subscribe_quote_ticks(self, instrument_id: InstrumentId) -> None:
+    async def _subscribe_quote_ticks(self, command) -> None:
         """
         Subscribe to quote ticks for an instrument.
 
         Parameters
         ----------
-        instrument_id : InstrumentId
-            The instrument ID to subscribe to.
+        command : SubscribeQuoteTicks
+            The subscribe quote ticks command.
 
         """
         if not self._ws_client:
             self._log.error("WebSocket client not connected")
             return
 
+        instrument_id = command.instrument_id
         symbol = instrument_id.symbol.value
         self._quote_subscriptions.add(symbol)
 
@@ -389,20 +393,21 @@ class AlpacaDataClient(LiveMarketDataClient):
         await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Subscribed to quote ticks: {instrument_id}")
 
-    async def _subscribe_bars(self, bar_type: BarType) -> None:
+    async def _subscribe_bars(self, command) -> None:
         """
         Subscribe to bars for an instrument.
 
         Parameters
         ----------
-        bar_type : BarType
-            The bar type to subscribe to.
+        command : SubscribeBars
+            The subscribe bars command.
 
         """
         if not self._ws_client:
             self._log.error("WebSocket client not connected")
             return
 
+        bar_type = command.bar_type
         symbol = bar_type.instrument_id.symbol.value
         self._bar_subscriptions.add(symbol)
 
@@ -410,11 +415,12 @@ class AlpacaDataClient(LiveMarketDataClient):
         await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Subscribed to bars: {bar_type}")
 
-    async def _unsubscribe_trade_ticks(self, instrument_id: InstrumentId) -> None:
+    async def _unsubscribe_trade_ticks(self, command) -> None:
         """Unsubscribe from trade ticks."""
         if not self._ws_client:
             return
 
+        instrument_id = command.instrument_id
         symbol = instrument_id.symbol.value
         self._trade_subscriptions.discard(symbol)
 
@@ -422,11 +428,12 @@ class AlpacaDataClient(LiveMarketDataClient):
         await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Unsubscribed from trade ticks: {instrument_id}")
 
-    async def _unsubscribe_quote_ticks(self, instrument_id: InstrumentId) -> None:
+    async def _unsubscribe_quote_ticks(self, command) -> None:
         """Unsubscribe from quote ticks."""
         if not self._ws_client:
             return
 
+        instrument_id = command.instrument_id
         symbol = instrument_id.symbol.value
         self._quote_subscriptions.discard(symbol)
 
@@ -434,17 +441,45 @@ class AlpacaDataClient(LiveMarketDataClient):
         await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Unsubscribed from quote ticks: {instrument_id}")
 
-    async def _unsubscribe_bars(self, bar_type: BarType) -> None:
+    async def _unsubscribe_bars(self, command) -> None:
         """Unsubscribe from bars."""
         if not self._ws_client:
             return
 
+        bar_type = command.bar_type
         symbol = bar_type.instrument_id.symbol.value
         self._bar_subscriptions.discard(symbol)
 
         msg = nautilus_pyo3.AlpacaWebSocketClient.unsubscribe_bars_message([symbol])
         await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Unsubscribed from bars: {bar_type}")
+
+    async def _request_instrument(self, request: RequestInstrument) -> None:
+        """
+        Request instrument data.
+
+        Parameters
+        ----------
+        request : RequestInstrument
+            The request for instrument data.
+
+        """
+        if request.start is not None:
+            self._log.warning(
+                f"Requesting instrument {request.instrument_id} with specified `start` which has no effect",
+            )
+
+        if request.end is not None:
+            self._log.warning(
+                f"Requesting instrument {request.instrument_id} with specified `end` which has no effect",
+            )
+
+        instrument: Instrument | None = self._instrument_provider.find(request.instrument_id)
+        if instrument is None:
+            self._log.error(f"Cannot find instrument for {request.instrument_id}")
+            return
+
+        self._handle_instrument(instrument, request.id, request.start, request.end, request.params)
 
     async def _request_bars(
         self,

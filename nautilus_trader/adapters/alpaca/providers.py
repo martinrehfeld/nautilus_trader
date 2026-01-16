@@ -60,19 +60,28 @@ class AlpacaInstrumentProvider(InstrumentProvider):
         client: nautilus_pyo3.AlpacaHttpClient,
         config: InstrumentProviderConfig | None = None,
     ) -> None:
-        # Create a base InstrumentProviderConfig if we received an Alpaca-specific config
-        if config is not None and hasattr(config, 'load_all'):
-            # This is AlpacaInstrumentProviderConfig from Rust
-            base_config = InstrumentProviderConfig(
-                load_all=config.load_all,
-                log_warnings=config.log_warnings,
-            )
-            super().__init__(config=base_config)
-            self._log_warnings = config.log_warnings
+        # Check if this is a Python AlpacaInstrumentProviderConfig (which extends InstrumentProviderConfig)
+        # or a Rust nautilus_pyo3.AlpacaInstrumentProviderConfig (which needs conversion)
+        if config is not None and type(config).__name__ == 'AlpacaInstrumentProviderConfig':
+            # Check if it's from nautilus_pyo3 (Rust) or from adapters.alpaca.config (Python)
+            if hasattr(config, '__module__') and 'nautilus_pyo3' in config.__module__:
+                # This is Rust AlpacaInstrumentProviderConfig - needs conversion
+                load_ids = getattr(config, 'load_ids', None)
+                base_config = InstrumentProviderConfig(
+                    load_all=config.load_all,
+                    load_ids=load_ids,
+                    log_warnings=config.log_warnings,
+                )
+                super().__init__(config=base_config)
+                self._log_warnings = config.log_warnings
+            else:
+                # This is Python AlpacaInstrumentProviderConfig - pass directly
+                super().__init__(config=config)
+                self._log_warnings = config.log_warnings if hasattr(config, 'log_warnings') else True
         else:
             # Standard InstrumentProviderConfig
             super().__init__(config=config)
-            self._log_warnings = config.log_warnings if config else True
+            self._log_warnings = config.log_warnings if config and hasattr(config, 'log_warnings') else True
 
         self._client = client
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -------------------------------------------------------------------------------------------------
-#  Copyright (C) 2025 Nautech Systems Pty Ltd. All rights reserved.
-#  https://nautechsystems.io
+#  Copyright (C) 2026 Andrew Crum. All rights reserved.
+#  https://github.com/agcrum
 #
 #  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
 #  You may not use this file except in compliance with the License.
@@ -260,7 +260,7 @@ def main():
                 paper_trading=True,  # Use paper trading (safe)
                 data_feed=AlpacaDataFeed.IEX,  # Free data feed
                 instrument_provider=AlpacaInstrumentProviderConfig(
-                    load_all=True,  # Load instruments on startup
+                    load_ids=frozenset([instrument_id]),  # Load only the instrument we need
                 ),
             ),
         },
