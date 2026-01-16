@@ -10,11 +10,13 @@ permissions:
   actions: read
 
 on:
-  push:
-    branches:
-      - test-ci
-      - develop
-      - nightly
+  workflow_dispatch:
+  # Disabled automatic triggers - use manual dispatch only
+  # push:
+  #   branches:
+  #     - test-ci
+  #     - develop
+  #     - nightly
 
 env:
   PACKAGE_DIR: python
