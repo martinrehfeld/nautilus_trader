@@ -376,6 +376,7 @@ class AlpacaExecutionClient(LiveExecutionClient):
             List of fill reports for trade activities.
 
         """
+        from datetime import datetime, timedelta, UTC
         from nautilus_trader.model.objects import Money
 
         self._log.debug("Requesting FillReports...")
@@ -383,7 +384,14 @@ class AlpacaExecutionClient(LiveExecutionClient):
 
         try:
             # Build time filter parameters (RFC3339 format)
-            after = command.start.isoformat() if command.start else None
+            # Default to last 7 days if no start time specified to avoid fetching ancient fills
+            if command.start:
+                after = command.start.isoformat()
+            else:
+                default_start = datetime.now(UTC) - timedelta(days=7)
+                after = default_start.isoformat()
+                self._log.debug(f"No start time specified, defaulting to last 7 days: {after}")
+
             until = command.end.isoformat() if command.end else None
 
             # Fetch FILL activities from Alpaca
@@ -404,13 +412,18 @@ class AlpacaExecutionClient(LiveExecutionClient):
                     self._log.warning(f"No symbol for activity {activity.id}")
                     continue
 
+                # Build instrument ID
+                instrument_id = self._get_cached_instrument_id(activity.symbol)
+
                 # Filter by instrument if specified
                 if command.instrument_id is not None:
-                    instrument_id = self._get_cached_instrument_id(activity.symbol)
                     if instrument_id != command.instrument_id:
                         continue
-                else:
-                    instrument_id = self._get_cached_instrument_id(activity.symbol)
+
+                # Skip fills for instruments not in cache (not used by this strategy)
+                if not self._cache.instrument(instrument_id):
+                    self._log.debug(f"Skipping fill for {instrument_id}: instrument not in cache")
+                    continue
 
                 # Parse fill report
                 try:

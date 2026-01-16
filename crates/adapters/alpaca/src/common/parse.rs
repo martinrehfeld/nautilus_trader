@@ -87,8 +87,11 @@ pub fn parse_price(value: Decimal, precision: u8) -> Result<Price> {
 /// # Errors
 ///
 /// Returns an error if the quantity cannot be parsed.
-pub fn parse_quantity(value: u64, precision: u8) -> Result<Quantity> {
-    Ok(Quantity::from_raw(value.into(), precision))
+pub fn parse_quantity(value: Decimal, precision: u8) -> Result<Quantity> {
+    let raw = (value * Decimal::from(10_i64.pow(u32::from(precision)))).to_u128().ok_or_else(|| {
+        AlpacaError::ParseError(format!("Quantity value {} out of range for precision {}", value, precision))
+    })?;
+    Ok(Quantity::from_raw(raw, precision))
 }
 
 // 

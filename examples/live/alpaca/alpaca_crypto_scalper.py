@@ -49,6 +49,7 @@ import sys
 from decimal import Decimal
 
 from nautilus_trader.adapters.alpaca import ALPACA_VENUE
+from nautilus_trader.adapters.alpaca import AlpacaAssetClass
 from nautilus_trader.adapters.alpaca import AlpacaDataClientConfig
 from nautilus_trader.adapters.alpaca import AlpacaDataFeed
 from nautilus_trader.adapters.alpaca import AlpacaExecClientConfig
@@ -373,7 +374,7 @@ def main():
     config = TradingNodeConfig(
         trader_id=TraderId("ALPACA-CRYPTO-SCALPER-001"),
         logging=LoggingConfig(
-            log_level="INFO",
+            log_level="DEBUG",  # Changed to DEBUG to see type information
             log_colors=True,
         ),
         # Data client configuration
@@ -382,7 +383,8 @@ def main():
                 api_key=api_key,
                 api_secret=api_secret,
                 paper_trading=True,  # Use paper trading (safe)
-                data_feed=AlpacaDataFeed.IEX,  # Crypto uses same feed
+                asset_class=AlpacaAssetClass.Crypto,  # IMPORTANT: Set to Crypto for crypto data
+                data_feed=AlpacaDataFeed.IEX,  # Feed parameter (not used for crypto)
                 instrument_provider=AlpacaInstrumentProviderConfig(
                     load_ids=frozenset([instrument_id]),  # Load only the instrument we need
                 ),

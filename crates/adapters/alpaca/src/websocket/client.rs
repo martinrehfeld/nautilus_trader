@@ -118,7 +118,7 @@ impl AlpacaWebSocketClient {
     /// Panics if serialization of the subscribe message fails.
     #[must_use]
     pub fn subscribe_trades_message(symbols: Vec<String>) -> String {
-        let msg = AlpacaWsSubscribeMessage::subscribe(symbols, vec![], vec![]);
+        let msg = AlpacaWsSubscribeMessage::subscribe(symbols, vec![], vec![], vec![]);
         serde_json::to_string(&msg).expect("Failed to serialize subscribe message")
     }
 
@@ -129,7 +129,7 @@ impl AlpacaWebSocketClient {
     /// Panics if serialization of the subscribe message fails.
     #[must_use]
     pub fn subscribe_quotes_message(symbols: Vec<String>) -> String {
-        let msg = AlpacaWsSubscribeMessage::subscribe(vec![], symbols, vec![]);
+        let msg = AlpacaWsSubscribeMessage::subscribe(vec![], symbols, vec![], vec![]);
         serde_json::to_string(&msg).expect("Failed to serialize subscribe message")
     }
 
@@ -140,7 +140,18 @@ impl AlpacaWebSocketClient {
     /// Panics if serialization of the subscribe message fails.
     #[must_use]
     pub fn subscribe_bars_message(symbols: Vec<String>) -> String {
-        let msg = AlpacaWsSubscribeMessage::subscribe(vec![], vec![], symbols);
+        let msg = AlpacaWsSubscribeMessage::subscribe(vec![], vec![], symbols, vec![]);
+        serde_json::to_string(&msg).expect("Failed to serialize subscribe message")
+    }
+
+    /// Creates a subscription message for orderbooks.
+    ///
+    /// # Panics
+    ///
+    /// Panics if serialization of the subscribe message fails.
+    #[must_use]
+    pub fn subscribe_orderbooks_message(symbols: Vec<String>) -> String {
+        let msg = AlpacaWsSubscribeMessage::subscribe(vec![], vec![], vec![], symbols);
         serde_json::to_string(&msg).expect("Failed to serialize subscribe message")
     }
 
@@ -151,7 +162,7 @@ impl AlpacaWebSocketClient {
     /// Panics if serialization of the unsubscribe message fails.
     #[must_use]
     pub fn unsubscribe_trades_message(symbols: Vec<String>) -> String {
-        let msg = AlpacaWsSubscribeMessage::unsubscribe(symbols, vec![], vec![]);
+        let msg = AlpacaWsSubscribeMessage::unsubscribe(symbols, vec![], vec![], vec![]);
         serde_json::to_string(&msg).expect("Failed to serialize unsubscribe message")
     }
 
@@ -162,7 +173,7 @@ impl AlpacaWebSocketClient {
     /// Panics if serialization of the unsubscribe message fails.
     #[must_use]
     pub fn unsubscribe_quotes_message(symbols: Vec<String>) -> String {
-        let msg = AlpacaWsSubscribeMessage::unsubscribe(vec![], symbols, vec![]);
+        let msg = AlpacaWsSubscribeMessage::unsubscribe(vec![], symbols, vec![], vec![]);
         serde_json::to_string(&msg).expect("Failed to serialize unsubscribe message")
     }
 
@@ -173,7 +184,18 @@ impl AlpacaWebSocketClient {
     /// Panics if serialization of the unsubscribe message fails.
     #[must_use]
     pub fn unsubscribe_bars_message(symbols: Vec<String>) -> String {
-        let msg = AlpacaWsSubscribeMessage::unsubscribe(vec![], vec![], symbols);
+        let msg = AlpacaWsSubscribeMessage::unsubscribe(vec![], vec![], symbols, vec![]);
+        serde_json::to_string(&msg).expect("Failed to serialize unsubscribe message")
+    }
+
+    /// Creates an unsubscription message for orderbooks.
+    ///
+    /// # Panics
+    ///
+    /// Panics if serialization of the unsubscribe message fails.
+    #[must_use]
+    pub fn unsubscribe_orderbooks_message(symbols: Vec<String>) -> String {
+        let msg = AlpacaWsSubscribeMessage::unsubscribe(vec![], vec![], vec![], symbols);
         serde_json::to_string(&msg).expect("Failed to serialize unsubscribe message")
     }
 }
