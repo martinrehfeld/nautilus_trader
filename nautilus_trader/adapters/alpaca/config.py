@@ -112,6 +112,8 @@ class AlpacaExecClientConfig(LiveExecClientConfig, frozen=True):
         The timeout (seconds) for HTTP requests.
     max_retries : int, optional
         Maximum number of retries for failed requests.
+    instrument_provider : AlpacaInstrumentProviderConfig, optional
+        Configuration for the instrument provider.
 
     """
 
@@ -122,3 +124,4 @@ class AlpacaExecClientConfig(LiveExecClientConfig, frozen=True):
     proxy_url: str | None = None
     http_timeout_secs: int | None = None
     max_retries: int | None = None
+    instrument_provider: AlpacaInstrumentProviderConfig | None = None

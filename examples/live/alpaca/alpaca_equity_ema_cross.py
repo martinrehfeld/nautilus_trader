@@ -270,6 +270,9 @@ def main():
                 api_key=api_key,
                 api_secret=api_secret,
                 paper_trading=True,  # Use paper trading (safe)
+                instrument_provider=AlpacaInstrumentProviderConfig(
+                    load_ids=frozenset([instrument_id]),  # Load only the instrument we need
+                ),
             ),
         },
         timeout_connection=30.0,
