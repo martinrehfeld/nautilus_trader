@@ -5,10 +5,12 @@ permissions: # Principle of least privilege
   actions: read
 
 on:
-  push:
-    branches: [master, nightly, develop, test-ci, test-pre-commit]
-  pull_request:
-    branches: ['*']
+  workflow_dispatch:
+  # Disabled automatic triggers - use manual dispatch only
+  # push:
+  #   branches: [master, nightly, develop, test-ci, test-pre-commit]
+  # pull_request:
+  #   branches: ['*']
 
 jobs:
   pre-commit:
