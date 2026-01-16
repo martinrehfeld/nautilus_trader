@@ -203,7 +203,8 @@ class AlpacaDataClient(LiveMarketDataClient):
         if not self._ws_client:
             return
 
-        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_trades_message(symbols)
+        normalized_symbols = [self._normalize_symbol(s) for s in symbols]
+        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_trades_message(normalized_symbols)
         await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Resubscribed to trades: {symbols}")
 
@@ -212,7 +213,8 @@ class AlpacaDataClient(LiveMarketDataClient):
         if not self._ws_client:
             return
 
-        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_quotes_message(symbols)
+        normalized_symbols = [self._normalize_symbol(s) for s in symbols]
+        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_quotes_message(normalized_symbols)
         await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Resubscribed to quotes: {symbols}")
 
@@ -221,7 +223,8 @@ class AlpacaDataClient(LiveMarketDataClient):
         if not self._ws_client:
             return
 
-        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_bars_message(symbols)
+        normalized_symbols = [self._normalize_symbol(s) for s in symbols]
+        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_bars_message(normalized_symbols)
         await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Resubscribed to bars: {symbols}")
 
@@ -365,9 +368,10 @@ class AlpacaDataClient(LiveMarketDataClient):
 
         instrument_id = command.instrument_id
         symbol = instrument_id.symbol.value
+        normalized_symbol = self._normalize_symbol(symbol)
         self._trade_subscriptions.add(symbol)
 
-        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_trades_message([symbol])
+        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_trades_message([normalized_symbol])
         await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Subscribed to trade ticks: {instrument_id}")
 
@@ -387,11 +391,20 @@ class AlpacaDataClient(LiveMarketDataClient):
 
         instrument_id = command.instrument_id
         symbol = instrument_id.symbol.value
+        normalized_symbol = self._normalize_symbol(symbol)
         self._quote_subscriptions.add(symbol)
 
-        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_quotes_message([symbol])
+        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_quotes_message([normalized_symbol])
         await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Subscribed to quote ticks: {instrument_id}")
+
+    def _normalize_symbol(self, symbol: str) -> str:
+        """
+        Normalize symbol for Alpaca API.
+
+        Alpaca WebSocket API expects crypto symbols without slashes (e.g., BTCUSD not BTC/USD).
+        """
+        return symbol.replace("/", "")
 
     async def _subscribe_bars(self, command) -> None:
         """
@@ -409,9 +422,10 @@ class AlpacaDataClient(LiveMarketDataClient):
 
         bar_type = command.bar_type
         symbol = bar_type.instrument_id.symbol.value
+        normalized_symbol = self._normalize_symbol(symbol)
         self._bar_subscriptions.add(symbol)
 
-        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_bars_message([symbol])
+        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_bars_message([normalized_symbol])
         await self._ws_client.send_text(msg.encode("utf-8"))
         self._log.info(f"Subscribed to bars: {bar_type}")
 

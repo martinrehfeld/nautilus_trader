@@ -85,7 +85,7 @@ def get_cached_alpaca_http_client(
     )
 
 
-@lru_cache(1)
+@lru_cache(maxsize=None)
 def get_cached_alpaca_instrument_provider(
     client: nautilus_pyo3.AlpacaHttpClient,
     config=None,  # InstrumentProviderConfig
