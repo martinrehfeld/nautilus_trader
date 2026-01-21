@@ -58,6 +58,8 @@ pub fn alpaca(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<crate::http::models::AlpacaOrder>()?;
     m.add_class::<crate::http::models::AlpacaOrderRequest>()?;
     m.add_class::<crate::http::models::AlpacaActivity>()?;
+    m.add_class::<crate::http::models::AlpacaOptionContract>()?;
+    m.add_class::<crate::http::models::AlpacaOptionContractsResponse>()?;
 
     // WebSocket client
     m.add_class::<crate::websocket::client::AlpacaWebSocketClient>()?;

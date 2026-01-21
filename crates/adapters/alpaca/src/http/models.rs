@@ -79,6 +79,7 @@ pub struct AlpacaAsset {
 ///
 /// See: <https://docs.alpaca.markets/docs/options-trading>
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "python", pyclass(module = "nautilus_pyo3.alpaca"))]
 pub struct AlpacaOptionContract {
     /// Unique option contract identifier.
     pub id: String,
@@ -123,6 +124,7 @@ pub struct AlpacaOptionContract {
 
 /// Represents a paginated response for option contracts.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "python", pyclass(module = "nautilus_pyo3.alpaca"))]
 pub struct AlpacaOptionContractsResponse {
     /// List of option contracts.
     pub option_contracts: Vec<AlpacaOptionContract>,
