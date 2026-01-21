@@ -53,6 +53,7 @@ from datetime import datetime
 from datetime import timedelta
 from decimal import Decimal
 
+from nautilus_trader.adapters.alpaca import AlpacaEnvironment
 from nautilus_trader.adapters.alpaca import AlpacaHttpClient
 
 
@@ -77,7 +78,7 @@ async def get_option_chain(
     client: AlpacaHttpClient,
     underlying: str,
     days_to_expiry: int = 30,
-) -> list[dict]:
+) -> list:
     """
     Get options chain for an underlying symbol.
 
@@ -92,26 +93,24 @@ async def get_option_chain(
 
     Returns
     -------
-    list[dict]
-        List of option contracts
+    list
+        List of option contract objects
 
     """
     # Calculate date range
     today = datetime.now().date()
     target_date = today + timedelta(days=days_to_expiry)
 
-    params = {
-        "underlying_symbols": underlying,
-        "status": "active",
-        "expiration_date_gte": today.isoformat(),
-        "expiration_date_lte": target_date.isoformat(),
-    }
+    # Call the get_option_contracts method with proper parameters
+    response = await client.get_option_contracts(
+        underlying_symbols=underlying,
+        status="active",
+        expiration_date_gte=today.isoformat(),
+        expiration_date_lte=target_date.isoformat(),
+    )
 
-    response = await client.get("/v2/options/contracts", params=params)
-    import msgspec
-
-    data = msgspec.json.decode(response)
-    return data.get("option_contracts", [])
+    # Return the list of option contracts
+    return response.option_contracts
 
 
 async def example_bull_call_spread(client: AlpacaHttpClient, underlying: str = "SPY"):
@@ -144,19 +143,19 @@ async def example_bull_call_spread(client: AlpacaHttpClient, underlying: str = "
         return
 
     # Filter for calls
-    calls = [c for c in contracts if c.get("type") == "call"]
+    calls = [c for c in contracts if c.option_type == "call"]
 
     # Find a suitable expiration
-    expirations = list({c.get("expiration_date") for c in calls})
+    expirations = list({c.expiration_date for c in calls})
     if not expirations:
         print("No expirations found")
         return
 
     target_expiry = sorted(expirations)[0]  # Nearest expiration
-    expiry_calls = [c for c in calls if c.get("expiration_date") == target_expiry]
+    expiry_calls = [c for c in calls if c.expiration_date == target_expiry]
 
     # Sort by strike
-    expiry_calls.sort(key=lambda x: float(x.get("strike_price", 0)))
+    expiry_calls.sort(key=lambda x: float(x.strike_price))
 
     if len(expiry_calls) < 2:
         print("Not enough strikes available")
@@ -167,10 +166,10 @@ async def example_bull_call_spread(client: AlpacaHttpClient, underlying: str = "
     buy_strike_contract = expiry_calls[len(expiry_calls) // 2]  # Middle strike
     sell_strike_contract = expiry_calls[len(expiry_calls) // 2 + 5]  # 5 strikes higher
 
-    buy_symbol = buy_strike_contract.get("symbol")
-    sell_symbol = sell_strike_contract.get("symbol")
-    buy_strike = Decimal(buy_strike_contract.get("strike_price"))
-    sell_strike = Decimal(sell_strike_contract.get("strike_price"))
+    buy_symbol = buy_strike_contract.symbol
+    sell_symbol = sell_strike_contract.symbol
+    buy_strike = Decimal(buy_strike_contract.strike_price)
+    sell_strike = Decimal(sell_strike_contract.strike_price)
 
     print(f"Expiration: {target_expiry}")
     print(f"Buy:  {buy_symbol} (strike ${buy_strike})")
@@ -262,11 +261,11 @@ async def example_iron_condor(client: AlpacaHttpClient, underlying: str = "SPY")
         return
 
     # Split into calls and puts
-    calls = [c for c in contracts if c.get("type") == "call"]
-    puts = [c for c in contracts if c.get("type") == "put"]
+    calls = [c for c in contracts if c.option_type == "call"]
+    puts = [c for c in contracts if c.option_type == "put"]
 
     # Find a suitable expiration
-    expirations = list({c.get("expiration_date") for c in contracts})
+    expirations = list({c.expiration_date for c in contracts})
     if not expirations:
         print("No expirations found")
         return
@@ -274,12 +273,12 @@ async def example_iron_condor(client: AlpacaHttpClient, underlying: str = "SPY")
     target_expiry = sorted(expirations)[0]
 
     # Filter by expiration
-    expiry_calls = [c for c in calls if c.get("expiration_date") == target_expiry]
-    expiry_puts = [c for c in puts if c.get("expiration_date") == target_expiry]
+    expiry_calls = [c for c in calls if c.expiration_date == target_expiry]
+    expiry_puts = [c for c in puts if c.expiration_date == target_expiry]
 
     # Sort by strike
-    expiry_calls.sort(key=lambda x: float(x.get("strike_price", 0)))
-    expiry_puts.sort(key=lambda x: float(x.get("strike_price", 0)))
+    expiry_calls.sort(key=lambda x: float(x.strike_price))
+    expiry_puts.sort(key=lambda x: float(x.strike_price))
 
     if len(expiry_calls) < 10 or len(expiry_puts) < 10:
         print("Not enough strikes available")
@@ -295,36 +294,36 @@ async def example_iron_condor(client: AlpacaHttpClient, underlying: str = "SPY")
 
     print(f"Expiration: {target_expiry}")
     print("\nPut Spread:")
-    print(f"  Buy:  {buy_put.get('symbol')} (strike ${buy_put.get('strike_price')})")
-    print(f"  Sell: {sell_put.get('symbol')} (strike ${sell_put.get('strike_price')})")
+    print(f"  Buy:  {buy_put.symbol} (strike ${buy_put.strike_price})")
+    print(f"  Sell: {sell_put.symbol} (strike ${sell_put.strike_price})")
     print("\nCall Spread:")
-    print(f"  Sell: {sell_call.get('symbol')} (strike ${sell_call.get('strike_price')})")
-    print(f"  Buy:  {buy_call.get('symbol')} (strike ${buy_call.get('strike_price')})")
+    print(f"  Sell: {sell_call.symbol} (strike ${sell_call.strike_price})")
+    print(f"  Buy:  {buy_call.symbol} (strike ${buy_call.strike_price})")
     print()
 
     legs = [
         # Put spread
         {
-            "symbol": buy_put.get("symbol"),
+            "symbol": buy_put.symbol,
             "side": "buy",
             "ratio_qty": "1",
             "position_intent": "buy_to_open",
         },
         {
-            "symbol": sell_put.get("symbol"),
+            "symbol": sell_put.symbol,
             "side": "sell",
             "ratio_qty": "1",
             "position_intent": "sell_to_open",
         },
         # Call spread
         {
-            "symbol": sell_call.get("symbol"),
+            "symbol": sell_call.symbol,
             "side": "sell",
             "ratio_qty": "1",
             "position_intent": "sell_to_open",
         },
         {
-            "symbol": buy_call.get("symbol"),
+            "symbol": buy_call.symbol,
             "side": "buy",
             "ratio_qty": "1",
             "position_intent": "buy_to_open",
@@ -360,43 +359,41 @@ async def main():
 
     # Create HTTP client
     client = AlpacaHttpClient(
+        environment=AlpacaEnvironment.Paper,  # Use paper trading
         api_key=api_key,
         api_secret=api_secret,
-        paper_trading=True,  # Use paper trading
+        timeout_secs=None,
+        proxy_url=None,
     )
 
-    try:
-        # Run examples
-        await example_bull_call_spread(client, underlying="SPY")
-        await example_iron_condor(client, underlying="SPY")
+    # Run examples
+    await example_bull_call_spread(client, underlying="SPY")
+    await example_iron_condor(client, underlying="SPY")
 
-        print("\n" + "=" * 70)
-        print("Additional Strategies Available")
-        print("=" * 70)
-        print("\nVertical Spreads:")
-        print("  - Bull Call Spread: Buy lower call + Sell higher call")
-        print("  - Bear Call Spread: Sell lower call + Buy higher call")
-        print("  - Bull Put Spread: Sell higher put + Buy lower put")
-        print("  - Bear Put Spread: Buy higher put + Sell lower put")
-        print("\nStraddles/Strangles:")
-        print("  - Long Straddle: Buy ATM call + Buy ATM put")
-        print("  - Short Straddle: Sell ATM call + Sell ATM put")
-        print("  - Long Strangle: Buy OTM call + Buy OTM put")
-        print("  - Short Strangle: Sell OTM call + Sell OTM put")
-        print("\nComplex Spreads:")
-        print("  - Iron Condor: Sell put spread + Sell call spread")
-        print("  - Iron Butterfly: ATM straddle + OTM strangle")
-        print("  - Butterfly: Buy 1 + Sell 2 + Buy 1 (same type)")
-        print("\nKey Considerations:")
-        print("  - All multi-leg orders require 'mleg' order class")
-        print("  - Ratio quantities must be in simplest form (GCD = 1)")
-        print("  - Maximum 4 legs per order")
-        print("  - Day orders only for options")
-        print("  - Preview margin before submitting")
-        print("  - Account must be approved for options trading")
-
-    finally:
-        await client.close()
+    print("\n" + "=" * 70)
+    print("Additional Strategies Available")
+    print("=" * 70)
+    print("\nVertical Spreads:")
+    print("  - Bull Call Spread: Buy lower call + Sell higher call")
+    print("  - Bear Call Spread: Sell lower call + Buy higher call")
+    print("  - Bull Put Spread: Sell higher put + Buy lower put")
+    print("  - Bear Put Spread: Buy higher put + Sell lower put")
+    print("\nStraddles/Strangles:")
+    print("  - Long Straddle: Buy ATM call + Buy ATM put")
+    print("  - Short Straddle: Sell ATM call + Sell ATM put")
+    print("  - Long Strangle: Buy OTM call + Buy OTM put")
+    print("  - Short Strangle: Sell OTM call + Sell OTM put")
+    print("\nComplex Spreads:")
+    print("  - Iron Condor: Sell put spread + Sell call spread")
+    print("  - Iron Butterfly: ATM straddle + OTM strangle")
+    print("  - Butterfly: Buy 1 + Sell 2 + Buy 1 (same type)")
+    print("\nKey Considerations:")
+    print("  - All multi-leg orders require 'mleg' order class")
+    print("  - Ratio quantities must be in simplest form (GCD = 1)")
+    print("  - Maximum 4 legs per order")
+    print("  - Day orders only for options")
+    print("  - Preview margin before submitting")
+    print("  - Account must be approved for options trading")
 
 
 if __name__ == "__main__":

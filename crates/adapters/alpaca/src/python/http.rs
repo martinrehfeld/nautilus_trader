@@ -22,7 +22,10 @@ use crate::{
     common::enums::AlpacaEnvironment,
     http::{
         client::AlpacaHttpClient,
-        models::{AlpacaAccount, AlpacaActivity, AlpacaAsset, AlpacaOrder, AlpacaOrderRequest, AlpacaPosition},
+        models::{
+            AlpacaAccount, AlpacaActivity, AlpacaAsset, AlpacaOptionContract,
+            AlpacaOptionContractsResponse, AlpacaOrder, AlpacaOrderRequest, AlpacaPosition,
+        },
     },
 };
 
@@ -453,9 +456,195 @@ impl AlpacaHttpClient {
         })
     }
 
+    // ============================================================================
+    // Options Endpoints
+    // ============================================================================
+
+    /// Get option contracts.
+    ///
+    /// # Arguments
+    ///
+    /// * `underlying_symbols` - Filter by underlying symbol(s) (e.g., "SPY")
+    /// * `status` - Filter by status (e.g., "active")
+    /// * `expiration_date` - Filter by exact expiration date (YYYY-MM-DD)
+    /// * `expiration_date_gte` - Filter by expiration on or after date (YYYY-MM-DD)
+    /// * `expiration_date_lte` - Filter by expiration on or before date (YYYY-MM-DD)
+    /// * `strike_price_gte` - Filter by strike price >= value
+    /// * `strike_price_lte` - Filter by strike price <= value
+    /// * `contract_type` - Filter by type ("call" or "put")
+    #[pyo3(name = "get_option_contracts")]
+    #[pyo3(signature = (
+        underlying_symbols=None,
+        status=None,
+        expiration_date=None,
+        expiration_date_gte=None,
+        expiration_date_lte=None,
+        strike_price_gte=None,
+        strike_price_lte=None,
+        contract_type=None
+    ))]
+    fn py_get_option_contracts<'py>(
+        &self,
+        py: Python<'py>,
+        underlying_symbols: Option<String>,
+        status: Option<String>,
+        expiration_date: Option<String>,
+        expiration_date_gte: Option<String>,
+        expiration_date_lte: Option<String>,
+        strike_price_gte: Option<String>,
+        strike_price_lte: Option<String>,
+        contract_type: Option<String>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let response = client
+                .get_option_contracts(
+                    underlying_symbols.as_deref(),
+                    status.as_deref(),
+                    expiration_date.as_deref(),
+                    expiration_date_gte.as_deref(),
+                    expiration_date_lte.as_deref(),
+                    strike_price_gte.as_deref(),
+                    strike_price_lte.as_deref(),
+                    contract_type.as_deref(),
+                )
+                .await
+                .map_err(to_pyvalue_err)?;
+
+            Python::attach(|py| {
+                let py_response = Py::new(py, response)?;
+                Ok(py_response.into_any())
+            })
+        })
+    }
+
 }
 
 // Python bindings for HTTP models
+
+#[pymethods]
+impl AlpacaOptionContract {
+    fn __repr__(&self) -> String {
+        format!(
+            "AlpacaOptionContract(symbol='{}', type='{}', strike='{}', expiry='{}')",
+            self.symbol, self.option_type, self.strike_price, self.expiration_date
+        )
+    }
+
+    #[getter]
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    #[getter]
+    fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    #[getter]
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[getter]
+    fn status(&self) -> &str {
+        &self.status
+    }
+
+    #[getter]
+    fn tradable(&self) -> bool {
+        self.tradable
+    }
+
+    #[getter]
+    fn expiration_date(&self) -> &str {
+        &self.expiration_date
+    }
+
+    #[getter]
+    fn root_symbol(&self) -> &str {
+        &self.root_symbol
+    }
+
+    #[getter]
+    fn underlying_symbol(&self) -> &str {
+        &self.underlying_symbol
+    }
+
+    #[getter]
+    fn underlying_asset_id(&self) -> &str {
+        &self.underlying_asset_id
+    }
+
+    #[getter]
+    fn option_type(&self) -> &str {
+        &self.option_type
+    }
+
+    #[getter]
+    fn style(&self) -> &str {
+        &self.style
+    }
+
+    #[getter]
+    fn strike_price(&self) -> &str {
+        &self.strike_price
+    }
+
+    #[getter]
+    fn size(&self) -> &str {
+        &self.size
+    }
+
+    #[getter]
+    fn open_interest(&self) -> Option<&str> {
+        self.open_interest.as_deref()
+    }
+
+    #[getter]
+    fn open_interest_date(&self) -> Option<&str> {
+        self.open_interest_date.as_deref()
+    }
+
+    #[getter]
+    fn close_price(&self) -> Option<&str> {
+        self.close_price.as_deref()
+    }
+
+    #[getter]
+    fn close_price_date(&self) -> Option<&str> {
+        self.close_price_date.as_deref()
+    }
+}
+
+#[pymethods]
+impl AlpacaOptionContractsResponse {
+    fn __repr__(&self) -> String {
+        format!(
+            "AlpacaOptionContractsResponse(contracts={}, next_page_token={:?})",
+            self.option_contracts.len(),
+            self.next_page_token
+        )
+    }
+
+    #[getter]
+    fn option_contracts(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let py_contracts: PyResult<Vec<_>> = self
+            .option_contracts
+            .iter()
+            .map(|c| Py::new(py, c.clone()))
+            .collect();
+        let pylist = PyList::new(py, py_contracts?).unwrap().into_any().unbind();
+        Ok(pylist)
+    }
+
+    #[getter]
+    fn next_page_token(&self) -> Option<&str> {
+        self.next_page_token.as_deref()
+    }
+}
+
 #[pymethods]
 impl AlpacaAccount {
     fn __repr__(&self) -> String {

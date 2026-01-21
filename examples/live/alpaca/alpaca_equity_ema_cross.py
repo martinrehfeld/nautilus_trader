@@ -57,6 +57,12 @@ from nautilus_trader.model.data import BarType
 from nautilus_trader.model.enums import OrderSide
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.identifiers import TraderId
+from nautilus_trader.model.identifiers import Symbol
+from nautilus_trader.model.identifiers import Venue
+from nautilus_trader.model.instruments import Equity
+from nautilus_trader.model.objects import Currency
+from nautilus_trader.model.objects import Money
+from nautilus_trader.model.objects import Price
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading import Strategy
 from nautilus_trader.trading.config import StrategyConfig
@@ -107,6 +113,32 @@ class EMACrossStrategy(Strategy):
         self.log.info(f"Fast EMA: {self.fast_ema.period}, Slow EMA: {self.slow_ema.period}")
         self.log.info(f"Trade size: ${self.trade_size}")
 
+        # For FAKEPACA test symbol, create a synthetic instrument since it doesn't exist in REST API
+        if "FAKEPACA" in str(self.instrument_id):
+            self.log.info("Creating synthetic instrument for FAKEPACA test symbol")
+            instrument = Equity(
+                instrument_id=self.instrument_id,
+                raw_symbol=Symbol("FAKEPACA"),
+                currency=Currency.from_str("USD"),
+                price_precision=2,
+                price_increment=Price.from_str("0.01"),
+                lot_size=Quantity.from_int(1),
+                ts_event=0,
+                ts_init=0,
+                max_quantity=None,
+                min_quantity=None,
+                margin_init=Decimal(0),
+                margin_maint=Decimal(0),
+                maker_fee=Decimal(0),
+                taker_fee=Decimal(0),
+                isin=None,
+            )
+            self.cache.add_instrument(instrument)
+            self.log.info(f"Added synthetic instrument: {instrument}")
+        else:
+            # For real symbols, request instrument data
+            self.request_instrument(self.instrument_id)
+
         # Subscribe to bars
         self.subscribe_bars(self.bar_type)
 
@@ -115,9 +147,6 @@ class EMACrossStrategy(Strategy):
 
         # Subscribe to real-time trades
         self.subscribe_trade_ticks(self.instrument_id)
-
-        # Request initial instrument
-        self.request_instrument(self.instrument_id)
 
     def on_bar(self, bar):
         """
@@ -275,8 +304,20 @@ def main():
         print("  export ALPACA_API_SECRET=your_secret")
         sys.exit(1)
 
-    # Symbol to trade
-    symbol = "SPY"  # SPDR S&P 500 ETF - highly liquid, good for testing
+    # Trading mode: set USE_TEST_MODE=0 for live market data during market hours
+    use_test_mode = os.getenv("USE_TEST_MODE", "1") == "1"
+
+    if use_test_mode:
+        # Test mode - using FAKEPACA symbol (available 24/7)
+        symbol = "FAKEPACA"
+        ws_url = "wss://stream.data.alpaca.markets/v2/test"
+        load_instrument = False  # FAKEPACA not available in REST API
+    else:
+        # Live mode - use real symbol during market hours
+        symbol = os.getenv("SYMBOL", "AAPL")  # Default to AAPL, override with SYMBOL env var
+        ws_url = None  # Use default WebSocket URL
+        load_instrument = True  # Load real instrument from REST API
+
     instrument_id = InstrumentId.from_str(f"{symbol}.{ALPACA_VENUE}")
 
     # Create bar type (1-minute bars)
@@ -286,7 +327,7 @@ def main():
     config = TradingNodeConfig(
         trader_id=TraderId("ALPACA-EMA-CROSS-001"),
         logging=LoggingConfig(
-            log_level="DEBUG",  # Changed to DEBUG to see raw quote messages
+            log_level="INFO",  # INFO level for clean output
             log_colors=True,
         ),
         # Data client configuration
@@ -296,8 +337,10 @@ def main():
                 api_secret=api_secret,
                 paper_trading=True,  # Use paper trading (safe)
                 data_feed=AlpacaDataFeed.IEX,  # Free data feed
+                base_url_ws=ws_url,  # Test URL or None for default
                 instrument_provider=AlpacaInstrumentProviderConfig(
-                    load_ids=frozenset([instrument_id]),  # Load only the instrument we need
+                    load_all=False,
+                    load_ids=frozenset([instrument_id]) if load_instrument else frozenset(),
                 ),
             ),
         },
@@ -308,7 +351,7 @@ def main():
                 api_secret=api_secret,
                 paper_trading=True,  # Use paper trading (safe)
                 instrument_provider=AlpacaInstrumentProviderConfig(
-                    load_ids=frozenset([instrument_id]),  # Load only the instrument we need
+                    load_ids=frozenset([instrument_id]) if load_instrument else frozenset(),
                 ),
             ),
         },
@@ -336,7 +379,10 @@ def main():
 
     # Run
     print("\n" + "=" * 70)
-    print("Alpaca US Equity EMA Cross Strategy")
+    if use_test_mode:
+        print("Alpaca US Equity EMA Cross Strategy - TEST MODE")
+    else:
+        print("Alpaca US Equity EMA Cross Strategy - LIVE MODE")
     print("=" * 70)
     print(f"Instrument: {instrument_id}")
     print(f"Bar Type: {bar_type}")
@@ -344,8 +390,15 @@ def main():
     print(f"Slow EMA: {strategy_config.slow_ema_period}")
     print(f"Trade Size: ${strategy_config.trade_size}")
     print("Paper Trading: True (safe mode)")
-    print("Data Feed: IEX (free tier)")
-    print("\nPress Ctrl+C to stop")
+    if use_test_mode:
+        print(f"WebSocket URL: {ws_url}")
+        print("\nTest Mode: Using FAKEPACA symbol with Alpaca's test stream")
+        print("Note: Test stream is available 24/7, even outside market hours")
+        print("To use live market data: USE_TEST_MODE=0 SYMBOL=AAPL python alpaca_equity_ema_cross.py")
+    else:
+        print("\nLive Mode: Using real market data during market hours")
+        print("To use test mode: USE_TEST_MODE=1 python alpaca_equity_ema_cross.py")
+    print("Press Ctrl+C to stop")
     print("=" * 70 + "\n")
 
     try:

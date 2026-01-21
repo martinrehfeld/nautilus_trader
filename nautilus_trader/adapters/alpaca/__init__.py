@@ -33,7 +33,10 @@ try:
     from nautilus_trader.core.nautilus_pyo3.alpaca import ALPACA_VENUE
     from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaAssetClass
     from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaDataFeed
+    from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaEnvironment
     from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaHttpClient
+    from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaOptionContract
+    from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaOptionContractsResponse
     from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaOptionsMarginCalculator
 except ImportError:
     # Fallback: Try importing from nautilus_pyo3 directly (alternative module structure)
@@ -41,7 +44,10 @@ except ImportError:
         from nautilus_pyo3.alpaca import ALPACA_VENUE
         from nautilus_pyo3.alpaca import AlpacaAssetClass
         from nautilus_pyo3.alpaca import AlpacaDataFeed
+        from nautilus_pyo3.alpaca import AlpacaEnvironment
         from nautilus_pyo3.alpaca import AlpacaHttpClient
+        from nautilus_pyo3.alpaca import AlpacaOptionContract
+        from nautilus_pyo3.alpaca import AlpacaOptionContractsResponse
         from nautilus_pyo3.alpaca import AlpacaOptionsMarginCalculator
     except ImportError as e:
         # Provide helpful error message if Rust module not built
@@ -70,6 +76,7 @@ __all__ = [
     "ALPACA_VENUE",
     "AlpacaAssetClass",
     "AlpacaDataFeed",
+    "AlpacaEnvironment",
     # Config classes
     "AlpacaDataClientConfig",
     "AlpacaExecClientConfig",
@@ -82,6 +89,9 @@ __all__ = [
     # Factories
     "AlpacaLiveDataClientFactory",
     "AlpacaLiveExecClientFactory",
+    # Models
+    "AlpacaOptionContract",
+    "AlpacaOptionContractsResponse",
     # Utilities
     "AlpacaOptionsMarginCalculator",
 ]

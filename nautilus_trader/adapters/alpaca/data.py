@@ -320,9 +320,6 @@ class AlpacaDataClient(LiveMarketDataClient):
     def _handle_quote(self, msg: dict) -> None:
         """Handle quote tick message."""
         try:
-            # Debug: Log the raw quote message
-            self._log.debug(f"Raw quote message: {msg}")
-
             from nautilus_trader.core import nautilus_pyo3
             from nautilus_trader.core.nautilus_pyo3.alpaca import parse_quote_tick
             from nautilus_trader.model.data import QuoteTick
