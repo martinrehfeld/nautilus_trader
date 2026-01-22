@@ -76,10 +76,18 @@ pub fn current_timestamp_ns() -> UnixNanos {
 ///
 /// Returns an error if the price cannot be parsed.
 pub fn parse_price(value: Decimal, precision: u8) -> Result<Price> {
-    let raw = (value * Decimal::from(10_i64.pow(u32::from(precision)))).to_i64().ok_or_else(|| {
-        AlpacaError::ParseError(format!("Price value {} out of range for precision {}", value, precision))
+    // Price::from_raw expects raw value scaled to FIXED_PRECISION (9 or 16)
+    // Not scaled to the instrument precision
+    const FIXED_PRECISION: u8 = 16; // high-precision feature enabled
+    let multiplier = Decimal::from(10_i64.pow(u32::from(FIXED_PRECISION)));
+    let scaled = value * multiplier;
+    let raw_i128 = scaled.to_i128().ok_or_else(|| {
+        AlpacaError::ParseError(format!("Price value {} out of range for FIXED_PRECISION {}", value, FIXED_PRECISION))
     })?;
-    Ok(Price::from_raw(raw.into(), precision))
+    let raw = raw_i128.try_into().map_err(|_| {
+        AlpacaError::ParseError(format!("Price value {} exceeds i64 range", raw_i128))
+    })?;
+    Ok(Price::from_raw(raw, precision))
 }
 
 /// Parses a decimal quantity with given precision.
@@ -88,8 +96,16 @@ pub fn parse_price(value: Decimal, precision: u8) -> Result<Price> {
 ///
 /// Returns an error if the quantity cannot be parsed.
 pub fn parse_quantity(value: Decimal, precision: u8) -> Result<Quantity> {
-    let raw = (value * Decimal::from(10_i64.pow(u32::from(precision)))).to_u128().ok_or_else(|| {
-        AlpacaError::ParseError(format!("Quantity value {} out of range for precision {}", value, precision))
+    // Quantity::from_raw expects raw value scaled to FIXED_PRECISION (9 or 16)
+    // Not scaled to the instrument precision
+    const FIXED_PRECISION: u8 = 16; // high-precision feature enabled
+    let multiplier = Decimal::from(10_i64.pow(u32::from(FIXED_PRECISION)));
+    let scaled = value * multiplier;
+    let raw_u128 = scaled.to_u128().ok_or_else(|| {
+        AlpacaError::ParseError(format!("Quantity value {} out of range for FIXED_PRECISION {}", value, FIXED_PRECISION))
+    })?;
+    let raw = raw_u128.try_into().map_err(|_| {
+        AlpacaError::ParseError(format!("Quantity value {} exceeds u64 range", raw_u128))
     })?;
     Ok(Quantity::from_raw(raw, precision))
 }
@@ -179,6 +195,9 @@ pub fn parse_quote_tick(
 ) -> Result<QuoteTick> {
     // Parse timestamp
     let ts_event = parse_timestamp_ns(&quote.timestamp)?;
+
+    eprintln!("🔍 parse_quote_tick INPUT: bid_price={}, ask_price={}, bid_size={}, ask_size={}, price_prec={}, size_prec={}",
+              quote.bid_price, quote.ask_price, quote.bid_size, quote.ask_size, price_precision, size_precision);
 
     // Parse bid price and size
     let bid_price = parse_price(quote.bid_price, price_precision)?;

@@ -558,9 +558,15 @@ impl AlpacaDataClient {
     }
 
     async fn handle_trade_message(&self, msg: Value) -> Result<()> {
+        // Log raw JSON before deserialization
+        info!("🔍 RAW TRADE JSON: {}", msg);
+
         // Deserialize to AlpacaWsTrade
         let trade: AlpacaWsTrade = serde_json::from_value(msg)
             .map_err(|e| AlpacaError::ParseError(format!("Failed to parse trade: {}", e)))?;
+
+        info!("🔍 WebSocket TRADE RAW: symbol={}, price={}, size={}, trade_id={:?}",
+              trade.symbol, trade.price, trade.size, trade.trade_id);
 
         // Find instrument
         let instrument_id = self.find_instrument_id(&trade.symbol).await?;
@@ -578,9 +584,15 @@ impl AlpacaDataClient {
     }
 
     async fn handle_quote_message(&self, msg: Value) -> Result<()> {
+        // Log raw JSON before deserialization
+        info!("🔍 RAW QUOTE JSON: {}", msg);
+
         // Deserialize to AlpacaWsQuote
         let quote: AlpacaWsQuote = serde_json::from_value(msg)
             .map_err(|e| AlpacaError::ParseError(format!("Failed to parse quote: {}", e)))?;
+
+        info!("🔍 WebSocket QUOTE RAW: symbol={}, bid_price={}, bid_size={}, ask_price={}, ask_size={}",
+              quote.symbol, quote.bid_price, quote.bid_size, quote.ask_price, quote.ask_size);
 
         // Find instrument
         let instrument_id = self.find_instrument_id(&quote.symbol).await?;
@@ -715,9 +727,9 @@ impl AlpacaDataClient {
                 high: bar_data.h,
                 low: bar_data.l,
                 close: bar_data.c,
-                volume: bar_data.v,
+                volume: bar_data.v.into(),
                 timestamp: bar_data.t.clone(),
-                trade_count: bar_data.n,
+                trade_count: bar_data.n.map(|n| n as u64),
                 vwap: bar_data.vw,
             };
 
@@ -743,10 +755,10 @@ impl AlpacaDataClient {
             let ws_trade = AlpacaWsTrade {
                 msg_type: "t".to_string(),
                 symbol: instrument_id.symbol.to_string(),
-                trade_id: trade_data.i,
+                trade_id: trade_data.i.map(|i| i as u64),
                 exchange: trade_data.x.clone(),
                 price: trade_data.p,
-                size: trade_data.s,
+                size: trade_data.s.into(),
                 timestamp: trade_data.t.clone(),
                 conditions: trade_data.c.clone(),
                 tape: trade_data.z.clone(),
@@ -776,10 +788,10 @@ impl AlpacaDataClient {
                 symbol: instrument_id.symbol.to_string(),
                 ask_exchange: quote_data.ax.clone(),
                 ask_price: quote_data.ap,
-                ask_size: quote_data.as_,
+                ask_size: quote_data.as_.into(),
                 bid_exchange: quote_data.bx.clone(),
                 bid_price: quote_data.bp,
-                bid_size: quote_data.bs,
+                bid_size: quote_data.bs.into(),
                 timestamp: quote_data.t.clone(),
                 conditions: quote_data.c.clone(),
                 tape: quote_data.z.clone(),

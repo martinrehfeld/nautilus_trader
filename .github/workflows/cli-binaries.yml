@@ -6,9 +6,10 @@ permissions:
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - nightly
+  # Disabled automatic triggers - use manual dispatch only
+  # push:
+  #   branches:
+  #     - nightly
 
 env:
   RUST_BACKTRACE: 1
