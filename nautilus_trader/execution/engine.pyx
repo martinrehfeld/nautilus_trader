@@ -1217,11 +1217,11 @@ cdef class ExecutionEngine(Component):
         cdef ClientOrderId client_order_id = event.client_order_id
         cdef Order order = self._cache.order(event.client_order_id)
         if order is None:
-            self._log.warning(
-                f"Order with {event.client_order_id!r} "
-                f"not found in the cache to apply {event}"
-            )
-
+            if not (isinstance(event, OrderFilled) and self._is_leg_fill(event)):
+                self._log.warning(
+                    f"Order with {event.client_order_id!r} "
+                    f"not found in the cache to apply {event}"
+                )
             if event.venue_order_id is None:
                 self._log.error(
                     f"Cannot apply event to any order: "
@@ -1376,9 +1376,19 @@ cdef class ExecutionEngine(Component):
 
         fill.position_id = position_id
 
+        # Also send to portfolio endpoint for leg fills (which don't have orders in cache)
+        # Regular fills go through topic subscription below, so we only send directly for leg fills
+        # We do this BEFORE position update so portfolio can see the open quantity for PnL calcs
+        if self._is_leg_fill(fill):
+            self._msgbus.send(
+                endpoint="Portfolio.update_order",
+                msg=fill,
+            )
+
         # Handle position update
         self._handle_position_update(instrument, fill, oms_type)
 
+        # Publish to message bus topic
         self._msgbus.publish_c(
             topic=self._get_order_events_topic(fill.strategy_id),
             msg=fill,
@@ -1714,17 +1724,16 @@ cdef class ExecutionEngine(Component):
 
     cpdef void _flip_position(self, Instrument instrument, Position position, OrderFilled fill, OmsType oms_type):
         cdef Quantity difference = None
-        if position.side == PositionSide.LONG:
-            difference = Quantity(fill.last_qty - position.quantity, position.size_precision)
-        elif position.side == PositionSide.SHORT:
-            difference = Quantity(abs(position.quantity - fill.last_qty), position.size_precision)
+        if position.side == PositionSide.LONG or position.side == PositionSide.SHORT:
+            # fill.last_qty is always larger than position.quantity when flipping
+            difference = fill.last_qty - position.quantity
         else:
             difference = fill.last_qty
 
         # Split commission between two positions
         fill_percent: Decimal = position.quantity / fill.last_qty
         cdef Money commission1 = Money(fill.commission * fill_percent, fill.commission.currency)
-        cdef Money commission2 = Money(fill.commission - commission1, fill.commission.currency)
+        cdef Money commission2 = fill.commission - commission1
 
         cdef OrderFilled fill_split1 = None
         if position.is_open_c():

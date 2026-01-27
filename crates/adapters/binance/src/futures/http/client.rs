@@ -69,7 +69,7 @@ use crate::common::{
     },
     models::BinanceErrorResponse,
     parse::{parse_coinm_instrument, parse_usdm_instrument},
-    symbol::format_binance_symbol,
+    symbol::{format_binance_symbol, format_instrument_id},
     urls::get_http_base_url,
 };
 
@@ -942,6 +942,44 @@ pub enum BinanceFuturesInstrument {
     CoinM(BinanceFuturesCoinSymbol),
 }
 
+impl BinanceFuturesInstrument {
+    /// Returns the symbol name for the instrument.
+    #[must_use]
+    pub const fn symbol(&self) -> Ustr {
+        match self {
+            Self::UsdM(s) => s.symbol,
+            Self::CoinM(s) => s.symbol,
+        }
+    }
+
+    /// Returns the price precision for the instrument.
+    #[must_use]
+    pub const fn price_precision(&self) -> i32 {
+        match self {
+            Self::UsdM(s) => s.price_precision,
+            Self::CoinM(s) => s.price_precision,
+        }
+    }
+
+    /// Returns the quantity precision for the instrument.
+    #[must_use]
+    pub const fn quantity_precision(&self) -> i32 {
+        match self {
+            Self::UsdM(s) => s.quantity_precision,
+            Self::CoinM(s) => s.quantity_precision,
+        }
+    }
+
+    /// Returns the Nautilus-formatted instrument ID.
+    #[must_use]
+    pub fn id(&self) -> InstrumentId {
+        match self {
+            Self::UsdM(s) => format_instrument_id(&s.symbol, BinanceProductType::UsdM),
+            Self::CoinM(s) => format_instrument_id(&s.symbol, BinanceProductType::CoinM),
+        }
+    }
+}
+
 /// Binance Futures HTTP client for USD-M and COIN-M perpetuals.
 #[derive(Debug, Clone)]
 #[cfg_attr(
@@ -1010,10 +1048,10 @@ impl BinanceFuturesHttpClient {
         &self.raw
     }
 
-    /// Returns a reference to the instruments cache.
+    /// Returns a clone of the instruments cache Arc.
     #[must_use]
-    pub fn instruments_cache(&self) -> &DashMap<Ustr, BinanceFuturesInstrument> {
-        &self.instruments
+    pub fn instruments_cache(&self) -> Arc<DashMap<Ustr, BinanceFuturesInstrument>> {
+        Arc::clone(&self.instruments)
     }
 
     /// Returns server time.
@@ -1436,6 +1474,8 @@ impl BinanceFuturesHttpClient {
             new_order_resp_type: None,
             good_till_date: None,
             recv_window: None,
+            price_match: None,
+            self_trade_prevention_mode: None,
         };
 
         let order = self.raw.submit_order(&params).await?;
@@ -1726,7 +1766,7 @@ impl BinanceFuturesHttpClient {
             let order_instrument_id = instrument_id.unwrap_or_else(|| {
                 // Build instrument ID from order symbol
                 let suffix = self.product_type.suffix();
-                InstrumentId::from(format!("{}{}.BINANCE", order.symbol, suffix).as_str())
+                InstrumentId::from(format!("{}{}.BINANCE", order.symbol, suffix))
             });
 
             let size_precision = self.get_size_precision(&order.symbol).unwrap_or(8); // Default precision if not in cache

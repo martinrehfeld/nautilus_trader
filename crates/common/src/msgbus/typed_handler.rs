@@ -18,16 +18,16 @@
 //! This module provides generic handler traits and types that enable type-safe
 //! message dispatch without runtime downcasting for built-in message types.
 
-use std::{fmt::Debug, marker::PhantomData, rc::Rc};
+use std::{any::Any, fmt::Debug, marker::PhantomData, rc::Rc};
 
 use nautilus_core::UUID4;
 use ustr::Ustr;
 
 /// Compile-time type-safe message handler trait.
 ///
-/// Unlike [`MessageHandler`](super::handler::MessageHandler) which uses `&dyn Any`,
-/// this trait provides zero-cost dispatch for statically typed messages.
-pub trait Handler<T>: 'static {
+/// Provides zero-cost dispatch for statically typed messages. Can also be used
+/// with `dyn Any` for dynamic dispatch when type flexibility is needed.
+pub trait Handler<T: ?Sized>: 'static {
     /// Returns the unique identifier for this handler.
     fn id(&self) -> Ustr;
 
@@ -35,7 +35,7 @@ pub trait Handler<T>: 'static {
     fn handle(&self, message: &T);
 }
 
-impl<T, H: Handler<T>> Handler<T> for Rc<H> {
+impl<T: ?Sized, H: Handler<T>> Handler<T> for Rc<H> {
     fn id(&self) -> Ustr {
         (**self).id()
     }
@@ -47,19 +47,31 @@ impl<T, H: Handler<T>> Handler<T> for Rc<H> {
 
 /// A shareable wrapper for typed handlers.
 ///
-/// This is the typed equivalent of [`ShareableMessageHandler`](super::handler::ShareableMessageHandler),
-/// providing reference-counted access to handlers without type erasure.
+/// Provides reference-counted access to handlers. Supports both concrete types
+/// for zero-cost dispatch and `dyn Any` for dynamic dispatch.
 ///
 /// # Thread Safety
 ///
 /// Uses `Rc` intentionally (not `Arc`) for single-threaded use within each
 /// async runtime. The MessageBus uses thread-local storage to ensure each
 /// thread gets its own handlers.
-pub struct TypedHandler<T: 'static>(pub Rc<dyn Handler<T>>);
+pub struct TypedHandler<T: 'static + ?Sized>(pub Rc<dyn Handler<T>>);
 
-impl<T: 'static> Clone for TypedHandler<T> {
+impl<T: 'static + ?Sized> Clone for TypedHandler<T> {
     fn clone(&self) -> Self {
         Self(Rc::clone(&self.0))
+    }
+}
+
+impl<T: 'static + ?Sized> TypedHandler<T> {
+    /// Returns the handler ID.
+    pub fn id(&self) -> Ustr {
+        self.0.id()
+    }
+
+    /// Handles a message by delegating to the inner handler.
+    pub fn handle(&self, message: &T) {
+        self.0.handle(message);
     }
 }
 
@@ -84,19 +96,9 @@ impl<T: 'static> TypedHandler<T> {
     {
         Self::new(CallbackHandler::new(Some(id), callback))
     }
-
-    /// Returns the handler ID.
-    pub fn id(&self) -> Ustr {
-        self.0.id()
-    }
-
-    /// Handles a message by delegating to the inner handler.
-    pub fn handle(&self, message: &T) {
-        self.0.handle(message);
-    }
 }
 
-impl<T: 'static> Debug for TypedHandler<T> {
+impl<T: 'static + ?Sized> Debug for TypedHandler<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct(stringify!(TypedHandler))
             .field("id", &self.0.id())
@@ -105,23 +107,135 @@ impl<T: 'static> Debug for TypedHandler<T> {
     }
 }
 
-impl<T: 'static> PartialEq for TypedHandler<T> {
+impl<T: 'static + ?Sized> PartialEq for TypedHandler<T> {
     fn eq(&self, other: &Self) -> bool {
         self.0.id() == other.0.id()
     }
 }
 
-impl<T: 'static> Eq for TypedHandler<T> {}
+impl<T: 'static + ?Sized> Eq for TypedHandler<T> {}
 
-impl<T: 'static> std::hash::Hash for TypedHandler<T> {
+impl<T: 'static + ?Sized> std::hash::Hash for TypedHandler<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.0.id().hash(state);
     }
 }
 
+impl From<Rc<dyn Handler<dyn Any>>> for TypedHandler<dyn Any> {
+    fn from(handler: Rc<dyn Handler<dyn Any>>) -> Self {
+        Self(handler)
+    }
+}
+
+/// Type alias for handlers that work with dynamically-typed messages.
+///
+/// This replaces the legacy `MessageHandler` trait with a unified handler
+/// type that supports both typed and dynamic dispatch through the same trait.
+pub type ShareableMessageHandler = TypedHandler<dyn Any>;
+
+/// Creates a new `ShareableMessageHandler` from an `Rc<dyn Handler<dyn Any>>`.
+#[must_use]
+pub fn shareable_handler(handler: Rc<dyn Handler<dyn Any>>) -> ShareableMessageHandler {
+    TypedHandler(handler)
+}
+
+impl ShareableMessageHandler {
+    /// Creates a handler from a typed closure that internally downcasts.
+    ///
+    /// Use this when you need Any-based routing but want type-safe handling.
+    /// The callback will only be invoked if the message downcasts successfully.
+    pub fn from_typed<T, F>(f: F) -> Self
+    where
+        T: 'static,
+        F: Fn(&T) + 'static,
+    {
+        TypedHandler(Rc::new(DowncastingHandler::new(None::<&str>, f)))
+    }
+
+    /// Creates a handler from an Any-typed closure.
+    pub fn from_any<F>(f: F) -> Self
+    where
+        F: Fn(&dyn Any) + 'static,
+    {
+        TypedHandler(Rc::new(AnyCallbackHandler::new(None::<&str>, f)))
+    }
+}
+
+/// Handler that downcasts `&dyn Any` to a concrete type before calling the callback.
+struct DowncastingHandler<T, F: Fn(&T)> {
+    id: Ustr,
+    callback: F,
+    _marker: PhantomData<T>,
+}
+
+impl<T: 'static, F: Fn(&T) + 'static> DowncastingHandler<T, F> {
+    fn new<S: AsRef<str>>(id: Option<S>, callback: F) -> Self {
+        let id_ustr = id.map_or_else(
+            || generate_handler_id::<T, F>(&callback),
+            |s| Ustr::from(s.as_ref()),
+        );
+        Self {
+            id: id_ustr,
+            callback,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T: 'static, F: Fn(&T) + 'static> Handler<dyn Any> for DowncastingHandler<T, F> {
+    fn id(&self) -> Ustr {
+        self.id
+    }
+
+    fn handle(&self, message: &dyn Any) {
+        if let Some(typed_msg) = message.downcast_ref::<T>() {
+            (self.callback)(typed_msg);
+        } else {
+            log::error!(
+                "DowncastingHandler downcast failed: expected {} got {:?}",
+                std::any::type_name::<T>(),
+                message.type_id()
+            );
+        }
+    }
+}
+
+/// Handler that directly receives `&dyn Any` without downcasting.
+struct AnyCallbackHandler<F: Fn(&dyn Any)> {
+    id: Ustr,
+    callback: F,
+}
+
+impl<F: Fn(&dyn Any) + 'static> AnyCallbackHandler<F> {
+    fn new<S: AsRef<str>>(id: Option<S>, callback: F) -> Self {
+        let id_ustr = id.map_or_else(
+            || {
+                let callback_ptr = std::ptr::from_ref(&callback);
+                let uuid = UUID4::new();
+                Ustr::from(&format!("<{callback_ptr:?}>-{uuid}"))
+            },
+            |s| Ustr::from(s.as_ref()),
+        );
+        Self {
+            id: id_ustr,
+            callback,
+        }
+    }
+}
+
+impl<F: Fn(&dyn Any) + 'static> Handler<dyn Any> for AnyCallbackHandler<F> {
+    fn id(&self) -> Ustr {
+        self.id
+    }
+
+    fn handle(&self, message: &dyn Any) {
+        (self.callback)(message);
+    }
+}
+
 /// A callback-based handler implementation.
 ///
-/// This is the typed equivalent of [`TypedMessageHandler`](super::handler::TypedMessageHandler),
+/// This is the typed equivalent of `TypedMessageHandler`,
 /// but without runtime downcasting overhead.
 pub struct CallbackHandler<T, F: Fn(&T)> {
     id: Ustr,
@@ -168,6 +282,153 @@ fn generate_handler_id<T: 'static + ?Sized, F: 'static + Fn(&T)>(callback: &F) -
     let callback_ptr = std::ptr::from_ref(callback);
     let uuid = UUID4::new();
     Ustr::from(&format!("<{callback_ptr:?}>-{uuid}"))
+}
+
+fn generate_into_handler_id<T: 'static, F: 'static + Fn(T)>(callback: &F) -> Ustr {
+    let callback_ptr = std::ptr::from_ref(callback);
+    let uuid = UUID4::new();
+    Ustr::from(&format!("<{callback_ptr:?}>-{uuid}"))
+}
+
+/// Compile-time type-safe message handler trait that takes ownership.
+///
+/// Unlike [`Handler<T>`] which borrows messages, this trait takes ownership
+/// of messages, enabling zero-copy processing when the handler needs to store
+/// or forward the message.
+pub trait IntoHandler<T>: 'static {
+    /// Returns the unique identifier for this handler.
+    fn id(&self) -> Ustr;
+
+    /// Handles a message of type `T`, taking ownership.
+    fn handle(&self, message: T);
+}
+
+impl<T, H: IntoHandler<T>> IntoHandler<T> for Rc<H> {
+    fn id(&self) -> Ustr {
+        (**self).id()
+    }
+
+    fn handle(&self, message: T) {
+        (**self).handle(message);
+    }
+}
+
+/// A shareable wrapper for ownership-based typed handlers.
+///
+/// This is the ownership-based equivalent of [`TypedHandler`], used for
+/// point-to-point messaging where the sender transfers ownership of the message.
+///
+/// # Thread Safety
+///
+/// Uses `Rc` intentionally (not `Arc`) for single-threaded use within each
+/// async runtime. The MessageBus uses thread-local storage to ensure each
+/// thread gets its own handlers.
+pub struct TypedIntoHandler<T: 'static>(pub Rc<dyn IntoHandler<T>>);
+
+impl<T: 'static> Clone for TypedIntoHandler<T> {
+    fn clone(&self) -> Self {
+        Self(Rc::clone(&self.0))
+    }
+}
+
+impl<T: 'static> TypedIntoHandler<T> {
+    /// Creates a new typed into handler from any type implementing `IntoHandler<T>`.
+    pub fn new<H: IntoHandler<T>>(handler: H) -> Self {
+        Self(Rc::new(handler))
+    }
+
+    /// Creates a new typed into handler from a callback function.
+    pub fn from<F>(callback: F) -> Self
+    where
+        F: Fn(T) + 'static,
+    {
+        Self::new(IntoCallbackHandler::new(None::<&str>, callback))
+    }
+
+    /// Creates a new typed into handler from a callback function with a custom ID.
+    pub fn from_with_id<S: AsRef<str>, F>(id: S, callback: F) -> Self
+    where
+        F: Fn(T) + 'static,
+    {
+        Self::new(IntoCallbackHandler::new(Some(id), callback))
+    }
+
+    /// Returns the handler ID.
+    pub fn id(&self) -> Ustr {
+        self.0.id()
+    }
+
+    /// Handles a message by delegating to the inner handler, taking ownership.
+    pub fn handle(&self, message: T) {
+        self.0.handle(message);
+    }
+}
+
+impl<T: 'static> Debug for TypedIntoHandler<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct(stringify!(TypedIntoHandler))
+            .field("id", &self.0.id())
+            .field("type", &std::any::type_name::<T>())
+            .finish()
+    }
+}
+
+impl<T: 'static> PartialEq for TypedIntoHandler<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.id() == other.0.id()
+    }
+}
+
+impl<T: 'static> Eq for TypedIntoHandler<T> {}
+
+impl<T: 'static> std::hash::Hash for TypedIntoHandler<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.id().hash(state);
+    }
+}
+
+/// A callback-based handler implementation that takes ownership.
+///
+/// This is the ownership-based equivalent of `CallbackHandler`.
+pub struct IntoCallbackHandler<T, F: Fn(T)> {
+    id: Ustr,
+    callback: F,
+    _marker: PhantomData<T>,
+}
+
+impl<T: 'static, F: Fn(T) + 'static> IntoCallbackHandler<T, F> {
+    /// Creates a new into callback handler with an optional custom ID.
+    pub fn new<S: AsRef<str>>(id: Option<S>, callback: F) -> Self {
+        let id_ustr = id.map_or_else(
+            || generate_into_handler_id(&callback),
+            |s| Ustr::from(s.as_ref()),
+        );
+
+        Self {
+            id: id_ustr,
+            callback,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T: 'static, F: Fn(T) + 'static> IntoHandler<T> for IntoCallbackHandler<T, F> {
+    fn id(&self) -> Ustr {
+        self.id
+    }
+
+    fn handle(&self, message: T) {
+        (self.callback)(message);
+    }
+}
+
+impl<T, F: Fn(T)> Debug for IntoCallbackHandler<T, F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct(stringify!(IntoCallbackHandler))
+            .field("id", &self.id)
+            .field("type", &std::any::type_name::<T>())
+            .finish()
+    }
 }
 
 #[cfg(test)]

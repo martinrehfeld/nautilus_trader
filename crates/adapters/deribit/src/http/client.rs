@@ -15,11 +15,15 @@
 
 //! Deribit HTTP client implementation.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
 };
 
+use ahash::AHashSet;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use nautilus_core::{datetime::nanos_to_millis, nanos::UnixNanos, time::get_atomic_clock_realtime};
@@ -34,9 +38,11 @@ use nautilus_model::{
 };
 use nautilus_network::{
     http::{HttpClient, Method},
+    ratelimiter::quota::Quota,
     retry::{RetryConfig, RetryManager},
 };
 use serde::{Serialize, de::DeserializeOwned};
+use strum::IntoEnumIterator;
 use tokio_util::sync::CancellationToken;
 use ustr::Ustr;
 
@@ -55,7 +61,11 @@ use super::{
 };
 use crate::{
     common::{
-        consts::{DERIBIT_API_PATH, JSONRPC_VERSION, should_retry_error_code},
+        consts::{
+            DERIBIT_ACCOUNT_RATE_KEY, DERIBIT_API_PATH, DERIBIT_GLOBAL_RATE_KEY,
+            DERIBIT_HTTP_ACCOUNT_QUOTA, DERIBIT_HTTP_ORDER_QUOTA, DERIBIT_HTTP_REST_QUOTA,
+            DERIBIT_ORDER_RATE_KEY, JSONRPC_VERSION, should_retry_error_code,
+        },
         credential::Credential,
         parse::{
             extract_server_timestamp, parse_account_state, parse_bars,
@@ -124,10 +134,10 @@ impl DeribitRawHttpClient {
         Ok(Self {
             base_url,
             client: HttpClient::new(
-                std::collections::HashMap::new(), // headers
-                Vec::new(),                       // header_keys
-                Vec::new(),                       // keyed_quotas
-                None,                             // default_quota
+                HashMap::new(),
+                Vec::new(),
+                Self::rate_limiter_quotas(),
+                Some(*DERIBIT_HTTP_REST_QUOTA),
                 timeout_secs,
                 proxy_url,
             )
@@ -148,6 +158,80 @@ impl DeribitRawHttpClient {
     #[must_use]
     pub fn is_testnet(&self) -> bool {
         self.base_url.contains("test")
+    }
+
+    /// Returns the rate limiter quotas for the HTTP client.
+    ///
+    /// Quotas are organized by:
+    /// - Global: Overall rate limit for all requests
+    /// - Orders: Matching engine operations (buy, sell, cancel, etc.)
+    /// - Account: Account information endpoints
+    fn rate_limiter_quotas() -> Vec<(String, Quota)> {
+        vec![
+            (
+                DERIBIT_GLOBAL_RATE_KEY.to_string(),
+                *DERIBIT_HTTP_REST_QUOTA,
+            ),
+            (
+                DERIBIT_ORDER_RATE_KEY.to_string(),
+                *DERIBIT_HTTP_ORDER_QUOTA,
+            ),
+            (
+                DERIBIT_ACCOUNT_RATE_KEY.to_string(),
+                *DERIBIT_HTTP_ACCOUNT_QUOTA,
+            ),
+        ]
+    }
+
+    /// Returns rate limit keys for a given RPC method.
+    ///
+    /// Maps Deribit JSON-RPC methods to appropriate rate limit buckets.
+    fn rate_limit_keys(method: &str) -> Vec<String> {
+        let mut keys = vec![DERIBIT_GLOBAL_RATE_KEY.to_string()];
+
+        // Categorize by method type
+        if Self::is_order_method(method) {
+            keys.push(DERIBIT_ORDER_RATE_KEY.to_string());
+        } else if Self::is_account_method(method) {
+            keys.push(DERIBIT_ACCOUNT_RATE_KEY.to_string());
+        }
+
+        // Add method-specific key
+        keys.push(format!("deribit:{method}"));
+
+        keys
+    }
+
+    /// Returns true if the method is an order operation (matching engine).
+    fn is_order_method(method: &str) -> bool {
+        matches!(
+            method,
+            "private/buy"
+                | "private/sell"
+                | "private/edit"
+                | "private/cancel"
+                | "private/cancel_all"
+                | "private/cancel_all_by_currency"
+                | "private/cancel_all_by_instrument"
+                | "private/cancel_by_label"
+                | "private/close_position"
+        )
+    }
+
+    /// Returns true if the method accesses account information.
+    fn is_account_method(method: &str) -> bool {
+        matches!(
+            method,
+            "private/get_account_summaries"
+                | "private/get_account_summary"
+                | "private/get_positions"
+                | "private/get_position"
+                | "private/get_open_orders_by_currency"
+                | "private/get_open_orders_by_instrument"
+                | "private/get_order_state"
+                | "private/get_user_trades_by_currency"
+                | "private/get_user_trades_by_instrument"
+        )
     }
 
     /// Creates a new [`DeribitRawHttpClient`] with explicit credentials.
@@ -186,10 +270,10 @@ impl DeribitRawHttpClient {
         Ok(Self {
             base_url,
             client: HttpClient::new(
-                std::collections::HashMap::new(),
+                HashMap::new(),
                 Vec::new(),
-                Vec::new(),
-                None,
+                Self::rate_limiter_quotas(),
+                Some(*DERIBIT_HTTP_REST_QUOTA),
                 timeout_secs,
                 proxy_url,
             )
@@ -274,9 +358,11 @@ impl DeribitRawHttpClient {
     {
         // Create operation identifier combining URL and RPC method
         let operation_id = format!("{}#{}", self.base_url, method);
+        let params_clone = serde_json::to_value(&params)?;
+
         let operation = || {
             let method = method.to_string();
-            let params_clone = serde_json::to_value(&params).unwrap();
+            let params_clone = params_clone.clone();
 
             async move {
                 // Build JSON-RPC request
@@ -291,7 +377,7 @@ impl DeribitRawHttpClient {
                 let body = serde_json::to_vec(&request)?;
 
                 // Build headers
-                let mut headers = std::collections::HashMap::new();
+                let mut headers = HashMap::new();
                 headers.insert("Content-Type".to_string(), "application/json".to_string());
 
                 // Add authentication headers if required
@@ -304,6 +390,7 @@ impl DeribitRawHttpClient {
                     headers.extend(auth_headers);
                 }
 
+                let rate_limit_keys = Self::rate_limit_keys(&method);
                 let resp = self
                     .client
                     .request(
@@ -313,7 +400,7 @@ impl DeribitRawHttpClient {
                         Some(headers),
                         Some(body),
                         None,
-                        None,
+                        Some(rate_limit_keys),
                     )
                     .await
                     .map_err(|e| DeribitHttpError::NetworkError(e.to_string()))?;
@@ -890,15 +977,16 @@ impl DeribitHttpClient {
             };
 
         // Convert timestamps to milliseconds
-        let start_timestamp = start.map_or_else(
-            || Utc::now().timestamp_millis() - 3_600_000, // Default: 1 hour ago
-            |dt| dt.timestamp_millis(),
-        );
+        let now = Utc::now();
+        let end_dt = end.unwrap_or(now);
+        let start_dt = start.unwrap_or(end_dt - chrono::Duration::hours(1));
 
-        let end_timestamp = end.map_or_else(
-            || Utc::now().timestamp_millis(), // Default: now
-            |dt| dt.timestamp_millis(),
-        );
+        if let (Some(s), Some(e)) = (start, end) {
+            anyhow::ensure!(s < e, "Invalid time range: start={s:?} end={e:?}");
+        }
+
+        let start_timestamp = start_dt.timestamp_millis();
+        let end_timestamp = end_dt.timestamp_millis();
 
         let params = GetLastTradesByInstrumentAndTimeParams::new(
             instrument_id.symbol.to_string(),
@@ -1189,8 +1277,8 @@ impl DeribitHttpClient {
     ) -> anyhow::Result<Vec<OrderStatusReport>> {
         let ts_init = self.generate_ts_init();
         let mut reports = Vec::new();
+        let mut seen_order_ids = AHashSet::new();
 
-        // Helper closure to parse order and add to reports
         let mut parse_and_add = |order: &DeribitOrderMsg| {
             let symbol = Ustr::from(&order.instrument_name);
             if let Some(instrument) = self.get_instrument(&symbol) {
@@ -1204,7 +1292,8 @@ impl DeribitHttpClient {
                             (None, Some(e)) => ts_last <= e,
                             (None, None) => true,
                         };
-                        if in_range {
+                        // Only deduplicate if in range (prevents dropping valid historical reports)
+                        if in_range && seen_order_ids.insert(order.order_id.clone()) {
                             reports.push(report);
                         }
                     }
@@ -1277,7 +1366,6 @@ impl DeribitHttpClient {
 
             // For historical orders, iterate currencies (ANY may not be supported)
             if !open_only {
-                use strum::IntoEnumIterator;
                 for currency in DeribitCurrency::iter().filter(|c| *c != DeribitCurrency::ANY) {
                     let history_params = GetOrderHistoryByCurrencyParams {
                         currency,
@@ -1299,7 +1387,7 @@ impl DeribitHttpClient {
             }
         }
 
-        log::info!("Generated {} order status reports", reports.len());
+        log::debug!("Generated {} order status reports", reports.len());
         Ok(reports)
     }
 
@@ -1374,7 +1462,6 @@ impl DeribitHttpClient {
             }
         } else {
             // Iterate currencies (ANY not supported for user trades endpoint)
-            use strum::IntoEnumIterator;
             for currency in DeribitCurrency::iter().filter(|c| *c != DeribitCurrency::ANY) {
                 let params = GetUserTradesByCurrencyAndTimeParams {
                     currency,
@@ -1396,7 +1483,7 @@ impl DeribitHttpClient {
             }
         }
 
-        log::info!("Generated {} fill reports", reports.len());
+        log::debug!("Generated {} fill reports", reports.len());
         Ok(reports)
     }
 
@@ -1405,7 +1492,7 @@ impl DeribitHttpClient {
     /// Fetches positions from Deribit and converts them to Nautilus [`PositionStatusReport`].
     ///
     /// # Strategy
-    /// - Must iterate over currencies (Deribit requires currency param for positions)
+    /// - Uses `currency=any` to fetch all positions in one call
     /// - Filters by instrument_id if provided
     ///
     /// # Errors
@@ -1450,7 +1537,45 @@ impl DeribitHttpClient {
             reports.retain(|r| r.instrument_id == instrument_id);
         }
 
-        log::info!("Generated {} position status reports", reports.len());
+        log::debug!("Generated {} position status reports", reports.len());
         Ok(reports)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use super::*;
+    use crate::common::consts::{
+        DERIBIT_ACCOUNT_RATE_KEY, DERIBIT_GLOBAL_RATE_KEY, DERIBIT_ORDER_RATE_KEY,
+    };
+
+    #[rstest]
+    #[case("private/buy", true, false)]
+    #[case("private/cancel", true, false)]
+    #[case("private/get_account_summaries", false, true)]
+    #[case("private/get_positions", false, true)]
+    #[case("public/get_instruments", false, false)]
+    fn test_method_classification(
+        #[case] method: &str,
+        #[case] is_order: bool,
+        #[case] is_account: bool,
+    ) {
+        assert_eq!(DeribitRawHttpClient::is_order_method(method), is_order);
+        assert_eq!(DeribitRawHttpClient::is_account_method(method), is_account);
+    }
+
+    #[rstest]
+    #[case("private/buy", vec![DERIBIT_GLOBAL_RATE_KEY, DERIBIT_ORDER_RATE_KEY])]
+    #[case("private/get_account_summaries", vec![DERIBIT_GLOBAL_RATE_KEY, DERIBIT_ACCOUNT_RATE_KEY])]
+    #[case("public/get_instruments", vec![DERIBIT_GLOBAL_RATE_KEY])]
+    fn test_rate_limit_keys(#[case] method: &str, #[case] expected_keys: Vec<&str>) {
+        let keys = DeribitRawHttpClient::rate_limit_keys(method);
+
+        for key in &expected_keys {
+            assert!(keys.contains(&key.to_string()));
+        }
+        assert!(keys.contains(&format!("deribit:{method}")));
     }
 }

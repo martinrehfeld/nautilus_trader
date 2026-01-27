@@ -254,8 +254,7 @@ class OrderStatusReport(ExecutionReport):
         self.filled_qty = filled_qty
 
         # Clamp to minimum zero for robustness
-        raw_leaves_qty = max(self.quantity.raw - self.filled_qty.raw, 0)
-        self.leaves_qty = Quantity.from_raw(raw_leaves_qty, self.quantity.precision)
+        self.leaves_qty = self.quantity.saturating_sub(self.filled_qty)
 
         self.display_qty = display_qty
         self.avg_px = avg_px
@@ -321,6 +320,8 @@ class OrderStatusReport(ExecutionReport):
             and self.venue_order_id == other.venue_order_id
             and self.ts_accepted == other.ts_accepted
         )
+
+    __hash__: None = None  # type: ignore[assignment]  # Explicitly unhashable
 
     def __repr__(self) -> str:
         linked_ids = [o.value for o in self.linked_order_ids] if self.linked_order_ids else None
@@ -708,6 +709,8 @@ class FillReport(ExecutionReport):
             and self.trade_id == other.trade_id
             and self.ts_event == other.ts_event
         )
+
+    __hash__: None = None  # type: ignore[assignment]  # Explicitly unhashable
 
     def __repr__(self) -> str:
         return (

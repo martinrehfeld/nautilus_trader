@@ -31,7 +31,7 @@
 //!
 //! **Any-based routing** provides flexibility for extensibility:
 //! - `subscriptions`/`topics` maps with `ShareableMessageHandler`.
-//! - Handlers implement `MessageHandler`, receive `&dyn Any`.
+//! - Handlers implement `Handler<dyn Any>`, receive `&dyn Any`.
 //! - Supports arbitrary message types without modifying the bus.
 //! - Required for Python interop where types aren't known at compile time.
 //!
@@ -92,14 +92,12 @@ use std::{
 };
 
 use ahash::{AHashMap, AHashSet};
-use handler::ShareableMessageHandler;
 use indexmap::IndexMap;
-use matching::is_matching_backtracking;
 use nautilus_core::{UUID4, correctness::FAILED};
 use nautilus_model::{
     data::{
-        Bar, FundingRateUpdate, GreeksData, IndexPriceUpdate, MarkPriceUpdate, OrderBookDeltas,
-        OrderBookDepth10, QuoteTick, TradeTick,
+        Bar, Data, FundingRateUpdate, GreeksData, IndexPriceUpdate, MarkPriceUpdate,
+        OrderBookDeltas, OrderBookDepth10, QuoteTick, TradeTick,
     },
     events::{AccountState, OrderEventAny, PositionEvent},
     identifiers::TraderId,
@@ -108,15 +106,20 @@ use nautilus_model::{
     position::Position,
 };
 use smallvec::SmallVec;
-use switchboard::MessagingSwitchboard;
 use ustr::Ustr;
 
 use super::{
-    handler, matching,
+    ShareableMessageHandler,
+    matching::is_matching_backtracking,
     mstr::{Endpoint, MStr, Pattern, Topic},
-    set_message_bus, switchboard,
-    typed_endpoints::EndpointMap,
+    set_message_bus,
+    switchboard::MessagingSwitchboard,
+    typed_endpoints::{EndpointMap, IntoEndpointMap},
     typed_router::TopicRouter,
+};
+use crate::messages::{
+    data::{DataCommand, DataResponse},
+    execution::{ExecutionReport, TradingCommand},
 };
 
 /// Represents a subscription to a particular topic.
@@ -248,11 +251,18 @@ pub struct MessageBus {
     pub(crate) router_defi_collects: TopicRouter<nautilus_model::defi::PoolFeeCollect>, // nautilus-import-ok
     #[cfg(feature = "defi")]
     pub(crate) router_defi_flash: TopicRouter<nautilus_model::defi::PoolFlash>, // nautilus-import-ok
+    #[cfg(feature = "defi")]
+    pub(crate) endpoints_defi_data: IntoEndpointMap<nautilus_model::defi::DefiData>, // nautilus-import-ok
     pub(crate) endpoints_quotes: EndpointMap<QuoteTick>,
     pub(crate) endpoints_trades: EndpointMap<TradeTick>,
     pub(crate) endpoints_bars: EndpointMap<Bar>,
-    pub(crate) endpoints_order_events: EndpointMap<OrderEventAny>,
     pub(crate) endpoints_account_state: EndpointMap<AccountState>,
+    pub(crate) endpoints_trading_commands: IntoEndpointMap<TradingCommand>,
+    pub(crate) endpoints_data_commands: IntoEndpointMap<DataCommand>,
+    pub(crate) endpoints_data_responses: IntoEndpointMap<DataResponse>,
+    pub(crate) endpoints_exec_reports: IntoEndpointMap<ExecutionReport>,
+    pub(crate) endpoints_order_events: IntoEndpointMap<OrderEventAny>,
+    pub(crate) endpoints_data: IntoEndpointMap<Data>,
     routers_typed: AHashMap<TypeId, Box<dyn Any>>,
     endpoints_typed: AHashMap<TypeId, Box<dyn Any>>,
 }
@@ -310,11 +320,18 @@ impl MessageBus {
             router_defi_collects: TopicRouter::new(),
             #[cfg(feature = "defi")]
             router_defi_flash: TopicRouter::new(),
+            #[cfg(feature = "defi")]
+            endpoints_defi_data: IntoEndpointMap::new(),
             endpoints_quotes: EndpointMap::new(),
             endpoints_trades: EndpointMap::new(),
             endpoints_bars: EndpointMap::new(),
-            endpoints_order_events: EndpointMap::new(),
             endpoints_account_state: EndpointMap::new(),
+            endpoints_trading_commands: IntoEndpointMap::new(),
+            endpoints_data_commands: IntoEndpointMap::new(),
+            endpoints_data_responses: IntoEndpointMap::new(),
+            endpoints_exec_reports: IntoEndpointMap::new(),
+            endpoints_order_events: IntoEndpointMap::new(),
+            endpoints_data: IntoEndpointMap::new(),
             routers_typed: AHashMap::new(),
             endpoints_typed: AHashMap::new(),
         }
@@ -538,12 +555,9 @@ mod tests {
 
     use super::*;
     use crate::msgbus::{
-        self, get_message_bus,
-        handler::ShareableMessageHandler,
+        self, ShareableMessageHandler, get_message_bus,
         matching::is_matching_backtracking,
-        stubs::{
-            check_handler_was_called, get_call_check_shareable_handler, get_stub_shareable_handler,
-        },
+        stubs::{get_call_check_handler, get_stub_shareable_handler},
         subscriptions_count_any,
     };
 
@@ -637,15 +651,15 @@ mod tests {
     fn test_endpoint_send() {
         let msgbus = get_message_bus();
         let endpoint = "MyEndpoint".into();
-        let handler = get_call_check_shareable_handler(None);
+        let (handler, checker) = get_call_check_handler(None);
 
-        msgbus::register_any(endpoint, handler.clone());
+        msgbus::register_any(endpoint, handler);
         assert!(msgbus.borrow().get_endpoint(endpoint).is_some());
-        assert!(!check_handler_was_called(handler.clone()));
+        assert!(!checker.was_called());
 
         // Send a message to the endpoint
         msgbus::send_any(endpoint, &"Test Message");
-        assert!(check_handler_was_called(handler));
+        assert!(checker.was_called());
     }
 
     #[rstest]

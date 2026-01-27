@@ -19,17 +19,20 @@
 //! orchestrator and the network layer. It exclusively owns the `WebSocketClient` and
 //! processes commands from the client via an unbounded channel.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+use std::{
+    collections::VecDeque,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
 };
 
-use ahash::AHashMap;
-use nautilus_core::{AtomicTime, UnixNanos, time::get_atomic_clock_realtime};
+use ahash::{AHashMap, AHashSet};
+use nautilus_core::{AtomicTime, UUID4, UnixNanos, time::get_atomic_clock_realtime};
 use nautilus_model::{
-    data::Data,
-    events::{OrderCancelRejected, OrderModifyRejected, OrderRejected},
-    identifiers::{AccountId, ClientOrderId, InstrumentId, StrategyId, TraderId},
+    data::{Bar, Data},
+    events::{AccountState, OrderCancelRejected, OrderModifyRejected, OrderRejected},
+    identifiers::{AccountId, ClientOrderId, InstrumentId, StrategyId, TraderId, VenueOrderId},
     instruments::{Instrument, InstrumentAny},
 };
 use nautilus_network::{
@@ -41,7 +44,7 @@ use tokio_tungstenite::tungstenite::Message;
 use ustr::Ustr;
 
 use super::{
-    enums::{DeribitHeartbeatType, DeribitWsChannel},
+    enums::{DeribitBookMsgType, DeribitHeartbeatType, DeribitWsChannel},
     error::DeribitWsError,
     messages::{
         DeribitAuthResult, DeribitBookMsg, DeribitCancelAllByInstrumentParams, DeribitCancelParams,
@@ -58,6 +61,10 @@ use super::{
         parse_ticker_to_mark_price, parse_trades_data, parse_user_order_msg, parse_user_trade_msg,
         resolution_to_bar_type,
     },
+};
+use crate::common::{
+    consts::{DERIBIT_POST_ONLY_ERROR_CODE, DERIBIT_RATE_LIMIT_KEY_ORDER},
+    parse::parse_portfolio_to_account_state,
 };
 
 /// Type of pending request for request ID correlation.
@@ -193,6 +200,9 @@ pub struct OrderContext {
     pub instrument_id: InstrumentId,
 }
 
+/// Maximum number of terminal orders to track for race condition prevention.
+const TERMINAL_ORDERS_LIMIT: usize = 10_000;
+
 /// Deribit WebSocket feed handler.
 ///
 /// Runs in a dedicated Tokio task, processing commands and raw WebSocket messages.
@@ -209,18 +219,25 @@ pub struct DeribitWsFeedHandler {
     retry_manager: RetryManager<DeribitWsError>,
     instruments_cache: AHashMap<Ustr, InstrumentAny>,
     request_id_counter: AtomicU64,
-    /// Pending requests awaiting response, keyed by request ID.
     pending_requests: AHashMap<u64, PendingRequestType>,
-    /// Account ID for order/fill reports.
     account_id: Option<AccountId>,
-    /// Order contexts keyed by venue_order_id.
-    /// Stores the original trader/strategy/client IDs from buy/sell commands
-    /// so they can be used when processing user.orders subscription updates.
-    order_contexts: AHashMap<String, OrderContext>,
+    order_contexts: AHashMap<VenueOrderId, OrderContext>,
+    emitted_order_accepted: AHashSet<VenueOrderId>,
+    terminal_orders_set: AHashSet<ClientOrderId>,
+    terminal_orders_queue: VecDeque<ClientOrderId>,
+    pending_bars: AHashMap<String, Bar>,
+    bars_timestamp_on_close: bool,
+    /// Last account state per currency for duplicate detection
+    last_account_states: AHashMap<String, AccountState>,
+    /// Last book change_id per instrument for sequence validation
+    book_sequence: AHashMap<Ustr, u64>,
+    /// Pending outbound messages to emit without dropping batched events.
+    pending_outgoing: VecDeque<NautilusWsMessage>,
 }
 
 impl DeribitWsFeedHandler {
     /// Creates a new feed handler.
+    #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub fn new(
         signal: Arc<AtomicBool>,
@@ -230,6 +247,7 @@ impl DeribitWsFeedHandler {
         auth_tracker: AuthTracker,
         subscriptions_state: SubscriptionState,
         account_id: Option<AccountId>,
+        bars_timestamp_on_close: bool,
     ) -> Self {
         Self {
             clock: get_atomic_clock_realtime(),
@@ -246,6 +264,14 @@ impl DeribitWsFeedHandler {
             pending_requests: AHashMap::new(),
             account_id,
             order_contexts: AHashMap::new(),
+            emitted_order_accepted: AHashSet::new(),
+            terminal_orders_set: AHashSet::new(),
+            terminal_orders_queue: VecDeque::new(),
+            pending_bars: AHashMap::new(),
+            bars_timestamp_on_close,
+            last_account_states: AHashMap::new(),
+            book_sequence: AHashMap::new(),
+            pending_outgoing: VecDeque::new(),
         }
     }
 
@@ -260,6 +286,28 @@ impl DeribitWsFeedHandler {
         self.account_id
     }
 
+    fn clear_state(&mut self) {
+        let pending_count = self.pending_requests.len();
+        let emitted_count = self.emitted_order_accepted.len();
+        let bars_count = self.pending_bars.len();
+        let account_count = self.last_account_states.len();
+        let book_count = self.book_sequence.len();
+        let outgoing_count = self.pending_outgoing.len();
+
+        self.pending_requests.clear();
+        self.emitted_order_accepted.clear();
+        self.pending_bars.clear();
+        self.last_account_states.clear();
+        self.book_sequence.clear();
+        self.pending_outgoing.clear();
+
+        log::debug!(
+            "Reset state: pending_requests={pending_count}, emitted_accepted={emitted_count}, \
+            pending_bars={bars_count}, account_states={account_count}, book_sequence={book_count}, \
+            pending_outgoing={outgoing_count}"
+        );
+    }
+
     /// Generates a unique request ID.
     fn next_request_id(&self) -> u64 {
         self.request_id_counter.fetch_add(1, Ordering::Relaxed)
@@ -270,21 +318,94 @@ impl DeribitWsFeedHandler {
         self.clock.get_time_ns()
     }
 
+    /// Checks if there's a pending buy/sell request for the given client_order_id.
+    ///
+    /// This is used to avoid emitting duplicate OrderAccepted events from the
+    /// user.orders subscription when the response path will also emit an event.
+    fn is_pending_order(&self, client_order_id: &ClientOrderId) -> bool {
+        self.pending_requests.values().any(|req| match req {
+            PendingRequestType::Buy {
+                client_order_id: id,
+                ..
+            }
+            | PendingRequestType::Sell {
+                client_order_id: id,
+                ..
+            } => id == client_order_id,
+            _ => false,
+        })
+    }
+
+    fn record_terminal_order(&mut self, client_order_id: ClientOrderId) {
+        if self.terminal_orders_set.insert(client_order_id) {
+            self.terminal_orders_queue.push_back(client_order_id);
+
+            // Truncate oldest entries to prevent unbounded growth
+            while self.terminal_orders_queue.len() > TERMINAL_ORDERS_LIMIT {
+                if let Some(old_id) = self.terminal_orders_queue.pop_front() {
+                    self.terminal_orders_set.remove(&old_id);
+                }
+            }
+        }
+    }
+
+    fn is_terminal_order(&self, client_order_id: &ClientOrderId) -> bool {
+        self.terminal_orders_set.contains(client_order_id)
+    }
+
+    /// Gets the OrderContext from a pending buy/sell request by client_order_id.
+    ///
+    /// Returns None if no pending request found.
+    fn get_pending_order_context(&self, client_order_id: &ClientOrderId) -> Option<OrderContext> {
+        for req in self.pending_requests.values() {
+            match req {
+                PendingRequestType::Buy {
+                    client_order_id: id,
+                    trader_id,
+                    strategy_id,
+                    instrument_id,
+                }
+                | PendingRequestType::Sell {
+                    client_order_id: id,
+                    trader_id,
+                    strategy_id,
+                    instrument_id,
+                } => {
+                    if id == client_order_id {
+                        return Some(OrderContext {
+                            client_order_id: *id,
+                            trader_id: *trader_id,
+                            strategy_id: *strategy_id,
+                            instrument_id: *instrument_id,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
     /// Sends a message over the WebSocket with retry logic.
     async fn send_with_retry(
         &self,
         payload: String,
-        rate_limit_keys: Option<Vec<String>>,
+        rate_limit_keys: Option<&[Ustr]>,
     ) -> Result<(), DeribitWsError> {
         if let Some(client) = &self.inner {
+            let keys_owned: Option<Vec<Ustr>> = rate_limit_keys.map(|k| k.to_vec());
             self.retry_manager
                 .execute_with_retry(
                     "websocket_send",
-                    || async {
-                        client
-                            .send_text(payload.clone(), rate_limit_keys.clone())
-                            .await
-                            .map_err(|e| DeribitWsError::Send(e.to_string()))
+                    || {
+                        let payload = payload.clone();
+                        let keys = keys_owned.clone();
+                        async move {
+                            client
+                                .send_text(payload, keys.as_deref())
+                                .await
+                                .map_err(|e| DeribitWsError::Send(e.to_string()))
+                        }
                     },
                     |e| matches!(e, DeribitWsError::Send(_)),
                     DeribitWsError::Timeout,
@@ -418,7 +539,7 @@ impl DeribitWsFeedHandler {
             serde_json::to_string(&request).map_err(|e| DeribitWsError::Json(e.to_string()))?;
 
         log::debug!("Sending buy order: request_id={request_id}");
-        self.send_with_retry(payload, Some(vec!["order".to_string()]))
+        self.send_with_retry(payload, Some(DERIBIT_RATE_LIMIT_KEY_ORDER.as_slice()))
             .await
     }
 
@@ -449,7 +570,7 @@ impl DeribitWsFeedHandler {
             serde_json::to_string(&request).map_err(|e| DeribitWsError::Json(e.to_string()))?;
 
         log::debug!("Sending sell order: request_id={request_id}");
-        self.send_with_retry(payload, Some(vec!["order".to_string()]))
+        self.send_with_retry(payload, Some(DERIBIT_RATE_LIMIT_KEY_ORDER.as_slice()))
             .await
     }
 
@@ -481,7 +602,7 @@ impl DeribitWsFeedHandler {
             serde_json::to_string(&request).map_err(|e| DeribitWsError::Json(e.to_string()))?;
 
         log::debug!("Sending edit order: request_id={request_id}, order_id={order_id}");
-        self.send_with_retry(payload, Some(vec!["order".to_string()]))
+        self.send_with_retry(payload, Some(DERIBIT_RATE_LIMIT_KEY_ORDER.as_slice()))
             .await
     }
 
@@ -513,7 +634,7 @@ impl DeribitWsFeedHandler {
             serde_json::to_string(&request).map_err(|e| DeribitWsError::Json(e.to_string()))?;
 
         log::debug!("Sending cancel order: request_id={request_id}, order_id={order_id}");
-        self.send_with_retry(payload, Some(vec!["order".to_string()]))
+        self.send_with_retry(payload, Some(DERIBIT_RATE_LIMIT_KEY_ORDER.as_slice()))
             .await
     }
 
@@ -541,7 +662,7 @@ impl DeribitWsFeedHandler {
         log::debug!(
             "Sending cancel_all_by_instrument: request_id={request_id}, instrument={instrument_name}"
         );
-        self.send_with_retry(payload, Some(vec!["order".to_string()]))
+        self.send_with_retry(payload, Some(DERIBIT_RATE_LIMIT_KEY_ORDER.as_slice()))
             .await
     }
 
@@ -577,7 +698,7 @@ impl DeribitWsFeedHandler {
             serde_json::to_string(&request).map_err(|e| DeribitWsError::Json(e.to_string()))?;
 
         log::debug!("Sending get_order_state: request_id={request_id}, order_id={order_id}");
-        self.send_with_retry(payload, Some(vec!["order".to_string()]))
+        self.send_with_retry(payload, Some(DERIBIT_RATE_LIMIT_KEY_ORDER.as_slice()))
             .await
     }
 
@@ -760,9 +881,11 @@ impl DeribitWsFeedHandler {
 
     /// Processes a raw WebSocket message.
     async fn process_raw_message(&mut self, text: &str) -> Option<NautilusWsMessage> {
-        // Check for reconnection signal
         if text == RECONNECTED {
             log::info!("Received reconnection signal");
+
+            self.clear_state();
+
             return Some(NautilusWsMessage::Reconnected);
         }
 
@@ -785,8 +908,18 @@ impl DeribitWsFeedHandler {
                 {
                     match request_type {
                         PendingRequestType::Authenticate => {
-                            // Parse authentication result
-                            if let Some(result) = &response.result {
+                            if let Some(error) = &response.error {
+                                log::error!(
+                                    "Authentication failed: code={}, message={}, request_id={}",
+                                    error.code,
+                                    error.message,
+                                    request_id
+                                );
+                                self.auth_tracker.fail(format!(
+                                    "Authentication error code={}: {}",
+                                    error.code, error.message
+                                ));
+                            } else if let Some(result) = &response.result {
                                 match serde_json::from_value::<DeribitAuthResult>(result.clone()) {
                                     Ok(auth_result) => {
                                         self.auth_tracker.succeed();
@@ -811,24 +944,68 @@ impl DeribitWsFeedHandler {
                             }
                         }
                         PendingRequestType::Subscribe { channels } => {
-                            // Confirm each channel in the subscription
-                            for ch in &channels {
-                                self.subscriptions_state.confirm_subscribe(ch);
-                                log::debug!("Subscription confirmed: {ch}");
+                            if let Some(error) = &response.error {
+                                log::error!(
+                                    "Subscribe failed: code={}, message={}, channels={:?}, request_id={}",
+                                    error.code,
+                                    error.message,
+                                    channels,
+                                    request_id
+                                );
+                                // Mark channels as failed so they can be retried
+                                for ch in &channels {
+                                    self.subscriptions_state.confirm_unsubscribe(ch);
+                                }
+                            } else {
+                                // Confirm each channel in the subscription
+                                for ch in &channels {
+                                    self.subscriptions_state.confirm_subscribe(ch);
+                                    log::debug!("Subscription confirmed: {ch}");
+                                }
                             }
                         }
                         PendingRequestType::Unsubscribe { channels } => {
-                            // Confirm each channel in the unsubscription
-                            for ch in &channels {
-                                self.subscriptions_state.confirm_unsubscribe(ch);
-                                log::debug!("Unsubscription confirmed: {ch}");
+                            if let Some(error) = &response.error {
+                                log::error!(
+                                    "Unsubscribe failed: code={}, message={}, channels={:?}, request_id={}",
+                                    error.code,
+                                    error.message,
+                                    channels,
+                                    request_id
+                                );
+                            } else {
+                                // Confirm each channel in the unsubscription
+                                for ch in &channels {
+                                    self.subscriptions_state.confirm_unsubscribe(ch);
+                                    log::debug!("Unsubscription confirmed: {ch}");
+                                }
                             }
                         }
                         PendingRequestType::SetHeartbeat => {
-                            log::debug!("Heartbeat enabled (request_id={request_id})");
+                            if let Some(error) = &response.error {
+                                log::error!(
+                                    "Set heartbeat failed: code={}, message={}, request_id={}",
+                                    error.code,
+                                    error.message,
+                                    request_id
+                                );
+                            } else {
+                                log::debug!("Heartbeat enabled (request_id={request_id})");
+                            }
                         }
                         PendingRequestType::Test => {
-                            log::trace!("Heartbeat test acknowledged (request_id={request_id})");
+                            if let Some(error) = &response.error {
+                                log::warn!(
+                                    "Heartbeat test failed: code={}, message={}, request_id={}",
+                                    error.code,
+                                    error.message,
+                                    request_id
+                                );
+                            } else {
+                                log::trace!(
+                                    "Heartbeat test acknowledged (request_id={request_id})"
+                                );
+                            }
                         }
                         PendingRequestType::Cancel {
                             client_order_id,
@@ -839,43 +1016,16 @@ impl DeribitWsFeedHandler {
                             if let Some(result) = &response.result {
                                 match serde_json::from_value::<DeribitOrderMsg>(result.clone()) {
                                     Ok(order_msg) => {
-                                        let venue_order_id = order_msg.order_id.clone();
-                                        log::info!(
-                                            "Order canceled: venue_order_id={}, client_order_id={}, state={}",
-                                            venue_order_id,
+                                        // Cancel confirmed - don't emit or remove context here.
+                                        // Let user.orders stream handle the cancel event to avoid
+                                        // duplicates. The stream will use the context for correct
+                                        // trader/strategy IDs and then remove it.
+                                        log::debug!(
+                                            "Cancel confirmed: venue_order_id={}, client_order_id={}, state={} (waiting for user.orders)",
+                                            order_msg.order_id,
                                             client_order_id,
                                             order_msg.order_state
                                         );
-
-                                        self.order_contexts.remove(&venue_order_id);
-
-                                        let instrument_name_ustr =
-                                            Ustr::from(order_msg.instrument_name.as_str());
-                                        if let Some(instrument) =
-                                            self.instruments_cache.get(&instrument_name_ustr)
-                                        {
-                                            if let Some(account_id) = self.account_id {
-                                                let event = parse_order_canceled(
-                                                    &order_msg,
-                                                    instrument,
-                                                    account_id,
-                                                    trader_id,
-                                                    strategy_id,
-                                                    ts_init,
-                                                );
-                                                return Some(NautilusWsMessage::OrderCanceled(
-                                                    event,
-                                                ));
-                                            } else {
-                                                log::warn!(
-                                                    "Cannot create OrderCanceled: account_id not set"
-                                                );
-                                            }
-                                        } else {
-                                            log::warn!(
-                                                "Instrument {instrument_name_ustr} not found in cache for cancel response"
-                                            );
-                                        }
                                     }
                                     Err(e) => {
                                         log::error!(
@@ -900,7 +1050,7 @@ impl DeribitWsFeedHandler {
                                             "code={}: {}",
                                             error.code, error.message
                                         )),
-                                        nautilus_core::UUID4::new(),
+                                        UUID4::new(),
                                         ts_init,
                                         ts_init,
                                         false,
@@ -948,12 +1098,12 @@ impl DeribitWsFeedHandler {
                                 match serde_json::from_value::<DeribitOrderResponse>(result.clone())
                                 {
                                     Ok(order_response) => {
-                                        let venue_order_id = order_response.order.order_id.clone();
-                                        log::info!(
-                                            "Order accepted: venue_order_id={}, client_order_id={}, state={}",
-                                            venue_order_id,
-                                            client_order_id,
-                                            order_response.order.order_state
+                                        let venue_order_id_str = &order_response.order.order_id;
+                                        let venue_order_id =
+                                            VenueOrderId::new(venue_order_id_str.as_str());
+                                        let order_state = &order_response.order.order_state;
+                                        log::debug!(
+                                            "Order response: venue_order_id={venue_order_id}, client_order_id={client_order_id}, state={order_state}"
                                         );
 
                                         self.order_contexts.insert(
@@ -966,33 +1116,51 @@ impl DeribitWsFeedHandler {
                                             },
                                         );
 
-                                        let instrument_name_ustr = Ustr::from(
-                                            order_response.order.instrument_name.as_str(),
-                                        );
-                                        if let Some(instrument) =
-                                            self.instruments_cache.get(&instrument_name_ustr)
-                                        {
-                                            if let Some(account_id) = self.account_id {
-                                                let event = parse_order_accepted(
-                                                    &order_response.order,
-                                                    instrument,
-                                                    account_id,
-                                                    trader_id,
-                                                    strategy_id,
-                                                    ts_init,
-                                                );
-                                                return Some(NautilusWsMessage::OrderAccepted(
-                                                    event,
-                                                ));
+                                        // Skip OrderAccepted if order already reached terminal state
+                                        if self.is_terminal_order(&client_order_id) {
+                                            log::debug!(
+                                                "Skipping OrderAccepted for terminal order: client_order_id={client_order_id}"
+                                            );
+                                            self.emitted_order_accepted.insert(venue_order_id);
+                                        } else if order_state == "filled" {
+                                            // Order went directly Submitted -> Filled (e.g., market orders)
+                                            log::debug!(
+                                                "Skipping OrderAccepted for already filled order: venue_order_id={venue_order_id}, client_order_id={client_order_id}"
+                                            );
+                                            self.record_terminal_order(client_order_id);
+                                            self.emitted_order_accepted.insert(venue_order_id);
+                                        } else {
+                                            let instrument_name_ustr = Ustr::from(
+                                                order_response.order.instrument_name.as_str(),
+                                            );
+                                            if let Some(instrument) =
+                                                self.instruments_cache.get(&instrument_name_ustr)
+                                            {
+                                                if let Some(account_id) = self.account_id {
+                                                    let event = parse_order_accepted(
+                                                        &order_response.order,
+                                                        instrument,
+                                                        account_id,
+                                                        trader_id,
+                                                        strategy_id,
+                                                        ts_init,
+                                                    );
+                                                    // Mark OrderAccepted as emitted to prevent duplicate from subscription
+                                                    self.emitted_order_accepted
+                                                        .insert(venue_order_id);
+                                                    return Some(NautilusWsMessage::OrderAccepted(
+                                                        event,
+                                                    ));
+                                                } else {
+                                                    log::warn!(
+                                                        "Cannot create OrderAccepted: account_id not set"
+                                                    );
+                                                }
                                             } else {
                                                 log::warn!(
-                                                    "Cannot create OrderAccepted: account_id not set"
+                                                    "Instrument {instrument_name_ustr} not found in cache for order response"
                                                 );
                                             }
-                                        } else {
-                                            log::warn!(
-                                                "Instrument {instrument_name_ustr} not found in cache for order response"
-                                            );
                                         }
                                     }
                                     Err(e) => {
@@ -1010,7 +1178,7 @@ impl DeribitWsFeedHandler {
                                                 ustr::ustr(&format!(
                                                     "Failed to parse response: {e}"
                                                 )),
-                                                nautilus_core::UUID4::new(),
+                                                UUID4::new(),
                                                 ts_init,
                                                 ts_init,
                                                 false,
@@ -1020,11 +1188,18 @@ impl DeribitWsFeedHandler {
                                     }
                                 }
                             } else if let Some(error) = &response.error {
-                                log::error!(
-                                    "Order rejected: code={}, message={}, client_order_id={}",
-                                    error.code,
-                                    error.message,
-                                    client_order_id
+                                let due_post_only = error.code == DERIBIT_POST_ONLY_ERROR_CODE;
+                                let reason = if let Some(data) = &error.data {
+                                    format!(
+                                        "code={}: {} (data: {})",
+                                        error.code, error.message, data
+                                    )
+                                } else {
+                                    format!("code={}: {}", error.code, error.message)
+                                };
+
+                                log::debug!(
+                                    "Order rejected: {reason}, client_order_id={client_order_id}"
                                 );
                                 return Some(NautilusWsMessage::OrderRejected(OrderRejected::new(
                                     trader_id,
@@ -1032,12 +1207,12 @@ impl DeribitWsFeedHandler {
                                     instrument_id,
                                     client_order_id,
                                     self.account_id.unwrap_or(AccountId::new("DERIBIT-UNKNOWN")),
-                                    ustr::ustr(&format!("code={}: {}", error.code, error.message)),
-                                    nautilus_core::UUID4::new(),
+                                    ustr::ustr(&reason),
+                                    UUID4::new(),
                                     ts_init,
                                     ts_init,
                                     false,
-                                    false,
+                                    due_post_only,
                                 )));
                             }
                         }
@@ -1051,7 +1226,8 @@ impl DeribitWsFeedHandler {
                                 match serde_json::from_value::<DeribitOrderResponse>(result.clone())
                                 {
                                     Ok(order_response) => {
-                                        let venue_order_id = order_response.order.order_id.clone();
+                                        let venue_order_id =
+                                            VenueOrderId::new(&order_response.order.order_id);
                                         log::info!(
                                             "Order updated: venue_order_id={}, client_order_id={}, state={}",
                                             venue_order_id,
@@ -1111,7 +1287,7 @@ impl DeribitWsFeedHandler {
                                                 ustr::ustr(&format!(
                                                     "Failed to parse response: {e}"
                                                 )),
-                                                nautilus_core::UUID4::new(),
+                                                UUID4::new(),
                                                 ts_init,
                                                 ts_init,
                                                 false,
@@ -1138,7 +1314,7 @@ impl DeribitWsFeedHandler {
                                             "code={}: {}",
                                             error.code, error.message
                                         )),
-                                        nautilus_core::UUID4::new(),
+                                        UUID4::new(),
                                         ts_init,
                                         ts_init,
                                         false,
@@ -1214,6 +1390,41 @@ impl DeribitWsFeedHandler {
                             }
                         }
                     }
+                } else if let Some(request_id) = response.id {
+                    // Response with ID but no matching pending request
+                    if let Some(error) = &response.error {
+                        // Log orphaned error response with all available context
+                        log::error!(
+                            "Deribit error for unknown request: code={}, message={}, request_id={}, data={:?}",
+                            error.code,
+                            error.message,
+                            request_id,
+                            error.data
+                        );
+                        return Some(NautilusWsMessage::Error(DeribitWsError::DeribitError {
+                            code: error.code,
+                            message: error.message.clone(),
+                        }));
+                    } else {
+                        // Success response but no pending request - likely already processed
+                        log::debug!(
+                            "Received response for unknown request_id={}, result present: {}",
+                            request_id,
+                            response.result.is_some()
+                        );
+                    }
+                } else if let Some(error) = &response.error {
+                    // Error response with no ID (shouldn't happen in JSON-RPC 2.0, but handle it)
+                    log::error!(
+                        "Deribit error with no request_id: code={}, message={}, data={:?}",
+                        error.code,
+                        error.message,
+                        error.data
+                    );
+                    return Some(NautilusWsMessage::Error(DeribitWsError::DeribitError {
+                        code: error.code,
+                        message: error.message.clone(),
+                    }));
                 }
                 None
             }
@@ -1253,6 +1464,22 @@ impl DeribitWsFeedHandler {
                                 && let Some(instrument) =
                                     self.instruments_cache.get(&book_msg.instrument_name)
                             {
+                                if book_msg.msg_type == DeribitBookMsgType::Change
+                                    && let Some(prev_id) = book_msg.prev_change_id
+                                    && let Some(&last_id) =
+                                        self.book_sequence.get(&book_msg.instrument_name)
+                                    && prev_id != last_id
+                                {
+                                    log::warn!(
+                                        "Book sequence gap for {}: expected prev_change_id={}, got {}",
+                                        book_msg.instrument_name,
+                                        last_id,
+                                        prev_id
+                                    );
+                                }
+                                self.book_sequence
+                                    .insert(book_msg.instrument_name, book_msg.change_id);
+
                                 match parse_book_msg(&book_msg, instrument, ts_init) {
                                     Ok(deltas) => {
                                         return Some(NautilusWsMessage::Deltas(deltas));
@@ -1296,21 +1523,14 @@ impl DeribitWsFeedHandler {
                                         if let Some(instrument) =
                                             self.instruments_cache.get(&instrument_name)
                                         {
-                                            if let Some(funding_rate) =
-                                                parse_perpetual_to_funding_rate(
-                                                    &perpetual_msg,
-                                                    instrument,
-                                                    ts_init,
-                                                )
-                                            {
-                                                return Some(NautilusWsMessage::FundingRates(
-                                                    vec![funding_rate],
-                                                ));
-                                            } else {
-                                                log::warn!(
-                                                    "Failed to create funding rate from perpetual msg"
-                                                );
-                                            }
+                                            let funding_rate = parse_perpetual_to_funding_rate(
+                                                &perpetual_msg,
+                                                instrument,
+                                                ts_init,
+                                            );
+                                            return Some(NautilusWsMessage::FundingRates(vec![
+                                                funding_rate,
+                                            ]));
                                         } else {
                                             log::warn!(
                                                 "Instrument {} not found in cache (cache size: {})",
@@ -1367,7 +1587,10 @@ impl DeribitWsFeedHandler {
                             }
                         }
                         DeribitWsChannel::ChartTrades => {
-                            // Parse chart.trades messages into Bar objects
+                            // Parse chart.trades messages into Bar objects using emit-on-next pattern.
+                            // Deribit sends updates for the current bar as it builds. We only emit
+                            // a bar when we receive a bar with a different timestamp, confirming
+                            // the previous bar is closed.
                             if let Ok(chart_msg) =
                                 serde_json::from_value::<DeribitChartMsg>(data.clone())
                             {
@@ -1383,7 +1606,6 @@ impl DeribitWsFeedHandler {
                                     {
                                         let instrument_id = instrument.id();
 
-                                        // Create BarType from resolution and instrument
                                         match resolution_to_bar_type(instrument_id, resolution) {
                                             Ok(bar_type) => {
                                                 let price_precision = instrument.price_precision();
@@ -1394,13 +1616,39 @@ impl DeribitWsFeedHandler {
                                                     bar_type,
                                                     price_precision,
                                                     size_precision,
+                                                    self.bars_timestamp_on_close,
                                                     ts_init,
                                                 ) {
-                                                    Ok(bar) => {
-                                                        log::debug!("Parsed bar: {bar:?}");
-                                                        return Some(NautilusWsMessage::Data(
-                                                            vec![Data::Bar(bar)],
-                                                        ));
+                                                    Ok(new_bar) => {
+                                                        // Check if we have a pending bar for this channel
+                                                        let channel_key = channel.clone();
+                                                        if let Some(pending_bar) =
+                                                            self.pending_bars.get(&channel_key)
+                                                        {
+                                                            // If new bar has different timestamp, the pending bar is closed
+                                                            if new_bar.ts_event
+                                                                != pending_bar.ts_event
+                                                            {
+                                                                let closed_bar = *pending_bar;
+                                                                self.pending_bars
+                                                                    .insert(channel_key, new_bar);
+                                                                log::debug!(
+                                                                    "Emitting closed bar: {closed_bar:?}"
+                                                                );
+                                                                return Some(
+                                                                    NautilusWsMessage::Data(vec![
+                                                                        Data::Bar(closed_bar),
+                                                                    ]),
+                                                                );
+                                                            }
+                                                            // Same timestamp - update pending bar with latest values
+                                                            self.pending_bars
+                                                                .insert(channel_key, new_bar);
+                                                        } else {
+                                                            // First bar for this channel - store as pending
+                                                            self.pending_bars
+                                                                .insert(channel_key, new_bar);
+                                                        }
                                                     }
                                                     Err(e) => {
                                                         log::warn!(
@@ -1424,7 +1672,15 @@ impl DeribitWsFeedHandler {
                             }
                         }
                         DeribitWsChannel::UserOrders => {
-                            match serde_json::from_value::<Vec<DeribitOrderMsg>>(data.clone()) {
+                            // Handle both array and single object responses
+                            let orders_result =
+                                serde_json::from_value::<Vec<DeribitOrderMsg>>(data.clone())
+                                    .or_else(|_| {
+                                        serde_json::from_value::<DeribitOrderMsg>(data.clone())
+                                            .map(|order| vec![order])
+                                    });
+
+                            match orders_result {
                                 Ok(orders) => {
                                     log::debug!("Received {} user order updates", orders.len());
 
@@ -1434,9 +1690,13 @@ impl DeribitWsFeedHandler {
                                         return Some(NautilusWsMessage::Raw(data.clone()));
                                     };
 
+                                    let mut outgoing = Vec::new();
+
                                     // Process each order and emit appropriate events
                                     for order in &orders {
-                                        let venue_order_id = &order.order_id;
+                                        let venue_order_id_str = &order.order_id;
+                                        let venue_order_id =
+                                            VenueOrderId::new(venue_order_id_str.as_str());
                                         let instrument_name =
                                             Ustr::from(order.instrument_name.as_str());
 
@@ -1450,9 +1710,41 @@ impl DeribitWsFeedHandler {
                                         };
 
                                         // Look up OrderContext for this order
-                                        // If not found, this is an external order (not submitted via this handler)
-                                        let context = self.order_contexts.get(venue_order_id);
-                                        let is_known_order = context.is_some();
+                                        // First check order_contexts (for orders whose response has been processed)
+                                        // Then check pending_requests (for orders whose response hasn't arrived yet)
+                                        // If neither found, this is a true external order
+                                        let context =
+                                            self.order_contexts.get(&venue_order_id).cloned();
+
+                                        // Extract client_order_id from order label for pending check
+                                        let label_client_order_id = order
+                                            .label
+                                            .as_ref()
+                                            .filter(|l| !l.is_empty())
+                                            .map(ClientOrderId::new);
+
+                                        // Check for pending request if not in order_contexts
+                                        let pending_context = if context.is_none() {
+                                            if let Some(client_id) = &label_client_order_id {
+                                                self.get_pending_order_context(client_id)
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            None
+                                        };
+
+                                        // Check if order has a pending request for context resolution
+                                        let has_pending_request =
+                                            if let Some(client_id) = &label_client_order_id {
+                                                self.is_pending_order(client_id)
+                                            } else {
+                                                false
+                                            };
+
+                                        let effective_context = context.or(pending_context);
+                                        let is_known_order =
+                                            effective_context.is_some() || has_pending_request;
 
                                         // Determine event type based on order state
                                         let event_type = determine_order_event_type(
@@ -1461,8 +1753,8 @@ impl DeribitWsFeedHandler {
                                             false,           // not from edit response
                                         );
 
-                                        let (trader_id, strategy_id, _client_order_id) =
-                                            if let Some(ctx) = context {
+                                        let (trader_id, strategy_id, client_order_id) =
+                                            if let Some(ctx) = effective_context {
                                                 (
                                                     ctx.trader_id,
                                                     ctx.strategy_id,
@@ -1472,30 +1764,51 @@ impl DeribitWsFeedHandler {
                                                 // External order - use default values
                                                 // Note: These won't match any strategy, which is correct
                                                 (
-                                                    TraderId::new("EXTERNAL"),
+                                                    TraderId::new("EXTERNAL-000"),
                                                     StrategyId::new("EXTERNAL"),
-                                                    ClientOrderId::new(venue_order_id),
+                                                    ClientOrderId::new(venue_order_id_str),
                                                 )
                                             };
 
                                         match event_type {
                                             OrderEventType::Accepted => {
-                                                if !is_known_order {
-                                                    let event = parse_order_accepted(
-                                                        order,
-                                                        instrument,
-                                                        account_id,
-                                                        trader_id,
-                                                        strategy_id,
-                                                        ts_init,
-                                                    );
+                                                // Skip if order already reached terminal state (race condition)
+                                                if self.is_terminal_order(&client_order_id) {
                                                     log::debug!(
-                                                        "Emitting OrderAccepted (external): venue_order_id={venue_order_id}"
+                                                        "Skipping OrderAccepted for terminal order: client_order_id={client_order_id}"
                                                     );
-                                                    return Some(NautilusWsMessage::OrderAccepted(
-                                                        event,
-                                                    ));
+                                                    continue;
                                                 }
+
+                                                // Check if we already emitted OrderAccepted for this order
+                                                // This prevents duplicates from both response and subscription paths
+                                                if self
+                                                    .emitted_order_accepted
+                                                    .contains(&venue_order_id)
+                                                {
+                                                    log::trace!(
+                                                        "Skipping duplicate OrderAccepted: venue_order_id={venue_order_id}"
+                                                    );
+                                                    continue;
+                                                }
+
+                                                let event = parse_order_accepted(
+                                                    order,
+                                                    instrument,
+                                                    account_id,
+                                                    trader_id,
+                                                    strategy_id,
+                                                    ts_init,
+                                                );
+
+                                                // Mark OrderAccepted as emitted
+                                                self.emitted_order_accepted.insert(venue_order_id);
+
+                                                log::debug!(
+                                                    "Emitting OrderAccepted: venue_order_id={venue_order_id}, is_known={is_known_order}"
+                                                );
+                                                outgoing
+                                                    .push(NautilusWsMessage::OrderAccepted(event));
                                             }
                                             OrderEventType::Canceled => {
                                                 let event = parse_order_canceled(
@@ -1509,10 +1822,11 @@ impl DeribitWsFeedHandler {
                                                 log::debug!(
                                                     "Emitting OrderCanceled: venue_order_id={venue_order_id}"
                                                 );
-                                                self.order_contexts.remove(venue_order_id);
-                                                return Some(NautilusWsMessage::OrderCanceled(
-                                                    event,
-                                                ));
+                                                self.record_terminal_order(client_order_id);
+                                                self.order_contexts.remove(&venue_order_id);
+                                                self.emitted_order_accepted.remove(&venue_order_id);
+                                                outgoing
+                                                    .push(NautilusWsMessage::OrderCanceled(event));
                                             }
                                             OrderEventType::Expired => {
                                                 let event = parse_order_expired(
@@ -1526,26 +1840,63 @@ impl DeribitWsFeedHandler {
                                                 log::debug!(
                                                     "Emitting OrderExpired: venue_order_id={venue_order_id}"
                                                 );
-                                                self.order_contexts.remove(venue_order_id);
-                                                return Some(NautilusWsMessage::OrderExpired(
-                                                    event,
-                                                ));
+                                                self.record_terminal_order(client_order_id);
+                                                self.order_contexts.remove(&venue_order_id);
+                                                self.emitted_order_accepted.remove(&venue_order_id);
+                                                outgoing
+                                                    .push(NautilusWsMessage::OrderExpired(event));
                                             }
                                             OrderEventType::Updated => {
-                                                // Skip - already emitted from edit response
-                                                log::trace!(
-                                                    "Skipping OrderUpdated from user.orders (already emitted from edit response): venue_order_id={venue_order_id}"
-                                                );
+                                                // Emit OrderStatusReport for updates
+                                                // This includes quantity/price changes from modify
+                                                match parse_user_order_msg(
+                                                    order, instrument, account_id, ts_init,
+                                                ) {
+                                                    Ok(report) => {
+                                                        log::debug!(
+                                                            "Emitting OrderStatusReport (updated): venue_order_id={venue_order_id}"
+                                                        );
+                                                        outgoing.push(
+                                                            NautilusWsMessage::OrderStatusReports(
+                                                                vec![report],
+                                                            ),
+                                                        );
+                                                    }
+                                                    Err(e) => {
+                                                        log::warn!(
+                                                            "Failed to parse order update: {e}"
+                                                        );
+                                                    }
+                                                }
                                             }
                                             OrderEventType::None => {
-                                                // No event to emit (e.g., partial fills handled via trades)
-                                                log::trace!(
-                                                    "No event to emit for order {}, state={}",
-                                                    venue_order_id,
-                                                    order.order_state
-                                                );
+                                                // Fills handled via user.trades, track terminal state
+                                                // for race condition prevention
+                                                if matches!(
+                                                    order.order_state.as_str(),
+                                                    "filled" | "rejected"
+                                                ) {
+                                                    log::debug!(
+                                                        "Recording terminal order: venue_order_id={venue_order_id}, state={}",
+                                                        order.order_state
+                                                    );
+                                                    self.record_terminal_order(client_order_id);
+                                                    self.order_contexts.remove(&venue_order_id);
+                                                    self.emitted_order_accepted
+                                                        .remove(&venue_order_id);
+                                                } else {
+                                                    log::trace!(
+                                                        "No event to emit for order {}, state={}",
+                                                        venue_order_id,
+                                                        order.order_state
+                                                    );
+                                                }
                                             }
                                         }
+                                    }
+
+                                    if !outgoing.is_empty() {
+                                        self.pending_outgoing.extend(outgoing);
                                     }
                                 }
                                 Err(e) => {
@@ -1554,7 +1905,15 @@ impl DeribitWsFeedHandler {
                             }
                         }
                         DeribitWsChannel::UserTrades => {
-                            match serde_json::from_value::<Vec<DeribitUserTradeMsg>>(data.clone()) {
+                            // Handle both array and single object responses
+                            let trades_result =
+                                serde_json::from_value::<Vec<DeribitUserTradeMsg>>(data.clone())
+                                    .or_else(|_| {
+                                        serde_json::from_value::<DeribitUserTradeMsg>(data.clone())
+                                            .map(|trade| vec![trade])
+                                    });
+
+                            match trades_result {
                                 Ok(trades) => {
                                     log::debug!("Received {} user trade updates", trades.len());
 
@@ -1607,15 +1966,52 @@ impl DeribitWsFeedHandler {
                         DeribitWsChannel::UserPortfolio => {
                             match serde_json::from_value::<DeribitPortfolioMsg>(data.clone()) {
                                 Ok(portfolio) => {
-                                    log::debug!(
-                                        "Portfolio update: {} equity={} balance={} margin={}",
-                                        portfolio.currency,
-                                        portfolio.equity,
-                                        portfolio.balance,
-                                        portfolio.margin_balance
-                                    );
-                                    // TODO: Convert to AccountState
-                                    return Some(NautilusWsMessage::Raw(data.clone()));
+                                    // Skip zero-balance currencies (common with cross-collateral)
+                                    // Only check equity and balance - initial_margin can be non-zero
+                                    // for all currencies when cross-collateral is enabled
+                                    if portfolio.equity.is_zero() && portfolio.balance.is_zero() {
+                                        log::trace!(
+                                            "Skipping zero-balance portfolio for {}",
+                                            portfolio.currency
+                                        );
+                                        return None;
+                                    }
+
+                                    // Require account_id for parsing
+                                    let Some(account_id) = self.account_id else {
+                                        log::warn!("Cannot parse portfolio: account_id not set");
+                                        return None;
+                                    };
+
+                                    match parse_portfolio_to_account_state(
+                                        &portfolio, account_id, ts_init,
+                                    ) {
+                                        Ok(account_state) => {
+                                            // Check for duplicate per currency
+                                            let currency_key = portfolio.currency.clone();
+                                            if let Some(last) =
+                                                self.last_account_states.get(&currency_key)
+                                                && account_state.has_same_balances_and_margins(last)
+                                            {
+                                                log::trace!(
+                                                    "Skipping duplicate portfolio update for {}",
+                                                    portfolio.currency
+                                                );
+                                                return None;
+                                            }
+
+                                            self.last_account_states
+                                                .insert(currency_key, account_state.clone());
+                                            return Some(NautilusWsMessage::AccountState(
+                                                account_state,
+                                            ));
+                                        }
+                                        Err(e) => {
+                                            log::warn!(
+                                                "Failed to parse portfolio to AccountState: {e}"
+                                            );
+                                        }
+                                    }
                                 }
                                 Err(e) => {
                                     log::warn!("Failed to deserialize portfolio: {e}");
@@ -1642,6 +2038,11 @@ impl DeribitWsFeedHandler {
                         );
                         if let Err(e) = self.handle_heartbeat_test_request().await {
                             log::error!("Failed to respond to heartbeat test_request: {e}");
+
+                            // Return error to signal connection may be unhealthy
+                            return Some(NautilusWsMessage::Error(DeribitWsError::Send(format!(
+                                "Heartbeat response failed: {e}"
+                            ))));
                         }
                     }
                     DeribitHeartbeatType::Heartbeat => {
@@ -1668,6 +2069,18 @@ impl DeribitWsFeedHandler {
     /// Data messages are sent directly to `out_tx` for the user stream.
     pub async fn next(&mut self) -> Option<NautilusWsMessage> {
         loop {
+            if let Some(msg) = self.pending_outgoing.pop_front() {
+                match msg {
+                    NautilusWsMessage::Reconnected | NautilusWsMessage::Authenticated(_) => {
+                        return Some(msg);
+                    }
+                    _ => {
+                        let _ = self.out_tx.send(msg);
+                        continue;
+                    }
+                }
+            }
+
             tokio::select! {
                 // Process commands from client
                 Some(cmd) = self.cmd_rx.recv() => {

@@ -21,10 +21,8 @@ use nautilus_common::{
     clock::TestClock,
     messages::execution::{BatchCancelOrders, CancelAllOrders, CancelOrder, ModifyOrder},
     msgbus::{
-        self,
-        handler::ShareableMessageHandler,
-        stubs::{clear_saved_messages, get_message_saving_handler, get_saved_messages},
-        switchboard::MessagingSwitchboard,
+        self, MessagingSwitchboard,
+        stubs::{TypedIntoMessageSavingHandler, get_typed_into_message_saving_handler},
     },
 };
 use nautilus_core::{UUID4, UnixNanos};
@@ -67,8 +65,12 @@ pub fn test_clock() -> Rc<RefCell<TestClock>> {
 }
 
 #[fixture]
-fn order_event_handler() -> ShareableMessageHandler {
-    get_message_saving_handler::<OrderEventAny>(Some(Ustr::from("ExecEngine.process")))
+fn order_event_handler() -> TypedIntoMessageSavingHandler<OrderEventAny> {
+    let (handler, saving_handler) = get_typed_into_message_saving_handler::<OrderEventAny>(Some(
+        Ustr::from("ExecEngine.process"),
+    ));
+    msgbus::register_order_event_endpoint(MessagingSwitchboard::exec_engine_process(), handler);
+    saving_handler
 }
 
 #[fixture]
@@ -213,31 +215,28 @@ fn get_order_matching_engine_l2(
     )
 }
 
-fn get_order_event_handler_messages(event_handler: ShareableMessageHandler) -> Vec<OrderEventAny> {
-    get_saved_messages::<OrderEventAny>(event_handler)
+fn get_order_event_handler_messages(
+    event_handler: &TypedIntoMessageSavingHandler<OrderEventAny>,
+) -> Vec<OrderEventAny> {
+    event_handler.get_messages()
 }
 
-fn clear_order_event_handler_messages(event_handler: ShareableMessageHandler) {
-    clear_saved_messages::<OrderEventAny>(event_handler);
+fn clear_order_event_handler_messages(
+    event_handler: &TypedIntoMessageSavingHandler<OrderEventAny>,
+) {
+    event_handler.clear();
 }
 
 // -- TESTS -----------------------------------------------------------------------------------
 
 #[rstest]
 fn test_process_order_when_instrument_already_expired(
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
     mut market_order_buy: OrderAny,
     test_clock: Rc<RefCell<TestClock>>,
 ) {
-    // TODO: We have at least three different fixture styles for obtaining and using the message bus,
-    // so this is not the final or standard pattern but avoids shadowing the `msgbus` module while
-    // the clearer calling convention for global message bus functions is established.
     let instrument = InstrumentAny::FuturesContract(futures_contract_es(None, None));
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
 
     // Set current timestamp ns to be higher than es instrument activation (1.1.2024)
     test_clock
@@ -249,7 +248,7 @@ fn test_process_order_when_instrument_already_expired(
     engine.process_order(&mut market_order_buy, account_id);
 
     // Get messages and test
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 1);
     let first_message = saved_messages.first().unwrap();
     assert_eq!(first_message.event_type(), OrderEventType::Rejected);
@@ -261,7 +260,7 @@ fn test_process_order_when_instrument_already_expired(
 
 #[rstest]
 fn test_process_order_when_instrument_not_active(
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
     mut market_order_buy: OrderAny,
 ) {
@@ -279,10 +278,6 @@ fn test_process_order_when_instrument_not_active(
     );
     let instrument =
         InstrumentAny::FuturesContract(futures_contract_es(Some(activation), Some(expiration)));
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
 
     // Create engine and process order
     let mut engine = get_order_matching_engine(instrument, None, None, None, None);
@@ -290,7 +285,7 @@ fn test_process_order_when_instrument_not_active(
     engine.process_order(&mut market_order_buy, account_id);
 
     // Get messages and test
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 1);
     let first_message = saved_messages.first().unwrap();
     assert_eq!(first_message.event_type(), OrderEventType::Rejected);
@@ -302,15 +297,10 @@ fn test_process_order_when_instrument_not_active(
 
 #[rstest]
 fn test_process_order_when_invalid_quantity_precision(
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
     instrument_eth_usdt: InstrumentAny,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     // Create market order with invalid quantity precision 0 for eth/usdt precision of 3
     let mut market_order_invalid_precision = OrderTestBuilder::new(OrderType::Market)
         .instrument_id(instrument_eth_usdt.id())
@@ -325,7 +315,7 @@ fn test_process_order_when_invalid_quantity_precision(
     engine.process_order(&mut market_order_invalid_precision, account_id);
 
     // Get messages and test
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 1);
     let first_message = saved_messages.first().unwrap();
     assert_eq!(first_message.event_type(), OrderEventType::Rejected);
@@ -339,16 +329,11 @@ fn test_process_order_when_invalid_quantity_precision(
 
 #[rstest]
 fn test_process_order_when_invalid_price_precision(
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
     instrument_es: InstrumentAny,
     test_clock: Rc<RefCell<TestClock>>,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     // Create engine and process order
     // Set current timestamp ns to be higher than es instrument activation (1.1.2024)
     test_clock
@@ -368,7 +353,7 @@ fn test_process_order_when_invalid_price_precision(
     engine.process_order(&mut limit_order, account_id);
 
     // Get messages and test
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 1);
     let first_message = saved_messages.first().unwrap();
     assert_eq!(first_message.event_type(), OrderEventType::Rejected);
@@ -382,16 +367,11 @@ fn test_process_order_when_invalid_price_precision(
 
 #[rstest]
 fn test_process_order_when_invalid_trigger_price_precision(
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
     instrument_es: InstrumentAny,
     test_clock: Rc<RefCell<TestClock>>,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     // Create engine and process order
     // Set current timestamp ns to be higher than es instrument activation (1.1.2024)
     test_clock
@@ -410,7 +390,7 @@ fn test_process_order_when_invalid_trigger_price_precision(
     engine.process_order(&mut stop_order, account_id);
 
     // Get messages and test
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 1);
     let first_message = saved_messages.first().unwrap();
     assert_eq!(first_message.event_type(), OrderEventType::Rejected);
@@ -424,15 +404,10 @@ fn test_process_order_when_invalid_trigger_price_precision(
 
 #[rstest]
 fn test_process_order_when_shorting_equity_without_margin_account(
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
     equity_aapl: Equity,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let instrument = InstrumentAny::Equity(equity_aapl);
 
     let mut market_order_sell = OrderTestBuilder::new(OrderType::Market)
@@ -448,7 +423,7 @@ fn test_process_order_when_shorting_equity_without_margin_account(
     engine.process_order(&mut market_order_sell, account_id);
 
     // Get messages and test
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 1);
     let first_message = saved_messages.first().unwrap();
     assert_eq!(first_message.event_type(), OrderEventType::Rejected);
@@ -465,16 +440,11 @@ fn test_process_order_when_shorting_equity_without_margin_account(
 
 #[rstest]
 fn test_process_order_when_invalid_reduce_only(
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
     instrument_eth_usdt: InstrumentAny,
     engine_config: OrderMatchingEngineConfig,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine = get_order_matching_engine(
         instrument_eth_usdt.clone(),
         None,
@@ -493,7 +463,7 @@ fn test_process_order_when_invalid_reduce_only(
     engine.process_order(&mut market_order_reduce, account_id);
 
     // Get messages and test
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 1);
     let first_message = saved_messages.first().unwrap();
     assert_eq!(first_message.event_type(), OrderEventType::Rejected);
@@ -507,15 +477,12 @@ fn test_process_order_when_invalid_reduce_only(
 
 #[rstest]
 fn test_process_order_when_invalid_contingent_orders(
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
     instrument_es: InstrumentAny,
     engine_config: OrderMatchingEngineConfig,
     test_clock: Rc<RefCell<TestClock>>,
 ) {
-    let endpoint = MessagingSwitchboard::exec_engine_process();
-    msgbus::register_any(endpoint, order_event_handler.clone());
-
     let cache = Rc::new(RefCell::new(Cache::default()));
     // Set current timestamp ns to be higher than es instrument activation (1.1.2024)
     test_clock
@@ -571,7 +538,7 @@ fn test_process_order_when_invalid_contingent_orders(
     engine.process_order(&mut accepted_stop_order, account_id);
 
     // Get messages and test
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 1);
     let first_message = saved_messages.first().unwrap();
     assert_eq!(first_message.event_type(), OrderEventType::Rejected);
@@ -583,17 +550,12 @@ fn test_process_order_when_invalid_contingent_orders(
 
 #[rstest]
 fn test_process_order_when_closed_linked_order(
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
     instrument_es: InstrumentAny,
     engine_config: OrderMatchingEngineConfig,
     test_clock: Rc<RefCell<TestClock>>,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     // Set current timestamp ns to be higher than es instrument activation (1.1.2024)
     test_clock
         .borrow_mut()
@@ -655,7 +617,7 @@ fn test_process_order_when_closed_linked_order(
     engine.process_order(&mut accepted_take_profit, account_id);
 
     // Get messages and test
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 1);
     let first_message = saved_messages.first().unwrap();
     assert_eq!(first_message.event_type(), OrderEventType::Rejected);
@@ -667,17 +629,12 @@ fn test_process_order_when_closed_linked_order(
 
 #[rstest]
 fn test_process_market_order_no_market_rejected(
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
     instrument_eth_usdt: InstrumentAny,
     mut market_order_buy: OrderAny,
     mut market_order_sell: OrderAny,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     // Create engine and process order
     let mut engine = get_order_matching_engine(instrument_eth_usdt, None, None, None, None);
 
@@ -685,7 +642,7 @@ fn test_process_market_order_no_market_rejected(
     engine.process_order(&mut market_order_sell, account_id);
 
     // Get messages and test
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 2);
     let first = saved_messages.first().unwrap();
     let second = saved_messages.get(1).unwrap();
@@ -730,31 +687,26 @@ fn test_bid_ask_initialized(instrument_es: InstrumentAny) {
     engine_l2
         .process_order_book_delta(&orderbook_delta_buy)
         .unwrap();
-    assert_eq!(engine_l2.core.bid, Some(Price::from("100.00")));
-    assert!(engine_l2.core.is_bid_initialized);
-    assert_eq!(engine_l2.core.ask, None);
-    assert!(!engine_l2.core.is_ask_initialized);
+    assert_eq!(engine_l2.get_core().bid, Some(Price::from("100.00")));
+    assert!(engine_l2.get_core().is_bid_initialized);
+    assert_eq!(engine_l2.get_core().ask, None);
+    assert!(!engine_l2.get_core().is_ask_initialized);
 
     engine_l2
         .process_order_book_delta(&orderbook_delta_sell)
         .unwrap();
-    assert_eq!(engine_l2.core.bid, Some(Price::from("100.00")));
-    assert!(engine_l2.core.is_bid_initialized);
-    assert_eq!(engine_l2.core.ask, Some(Price::from("101.00")));
-    assert!(engine_l2.core.is_ask_initialized);
+    assert_eq!(engine_l2.get_core().bid, Some(Price::from("100.00")));
+    assert!(engine_l2.get_core().is_bid_initialized);
+    assert_eq!(engine_l2.get_core().ask, Some(Price::from("101.00")));
+    assert!(engine_l2.get_core().is_ask_initialized);
 }
 
 #[rstest]
 fn test_not_enough_quantity_filled_fok_order(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
 
@@ -784,7 +736,7 @@ fn test_not_enough_quantity_filled_fok_order(
     engine_l2.process_order(&mut market_order, account_id);
 
     // We need to test that one OrderCanceled event was generated
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 1);
     let first_message = saved_messages.first().unwrap();
     assert_eq!(first_message.event_type(), OrderEventType::Canceled);
@@ -798,14 +750,9 @@ fn test_not_enough_quantity_filled_fok_order(
 #[rstest]
 fn test_valid_market_buy(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
 
@@ -849,7 +796,7 @@ fn test_valid_market_buy(
     engine_l2.process_order(&mut market_order, account_id);
 
     // We need to test that two Order filled events were generated where with correct prices and quantities
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 2);
     let event1 = saved_messages.first().unwrap();
     let fill1 = match event1 {
@@ -871,14 +818,9 @@ fn test_valid_market_buy(
 #[rstest]
 fn test_market_order_with_acks_generates_accepted_then_filled(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let config = OrderMatchingEngineConfig {
         use_market_order_acks: true,
         ..Default::default()
@@ -907,7 +849,7 @@ fn test_market_order_with_acks_generates_accepted_then_filled(
     engine.process_order(&mut market_order, account_id);
 
     // Verify OrderAccepted is generated before OrderFilled
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 2);
 
     let accepted = match saved_messages.first().unwrap() {
@@ -928,14 +870,9 @@ fn test_market_order_with_acks_generates_accepted_then_filled(
 #[rstest]
 fn test_market_order_with_protection_and_acks_generates_accepted_then_filled(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let config = OrderMatchingEngineConfig {
         use_market_order_acks: true,
         ..Default::default()
@@ -966,7 +903,7 @@ fn test_market_order_with_protection_and_acks_generates_accepted_then_filled(
     engine.process_order(&mut market_order, account_id);
 
     // Verify OrderUpdated (protection price), OrderAccepted, then OrderFilled
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 3);
 
     let updated = match saved_messages.first().unwrap() {
@@ -992,14 +929,9 @@ fn test_market_order_with_protection_and_acks_generates_accepted_then_filled(
 #[rstest]
 fn test_process_limit_post_only_order_that_would_be_a_taker(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
 
@@ -1031,7 +963,7 @@ fn test_process_limit_post_only_order_that_would_be_a_taker(
     engine_l2.process_order(&mut post_only_limit_order, account_id);
 
     // Test that one Order rejected event was generated
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     let first_message = saved_messages.first().unwrap();
     let rejected = match first_message {
         OrderEventAny::Rejected(rejected) => rejected,
@@ -1055,14 +987,9 @@ fn test_process_limit_post_only_order_that_would_be_a_taker(
 #[rstest]
 fn test_process_limit_order_not_matched_and_canceled_fok_order(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
 
@@ -1094,7 +1021,7 @@ fn test_process_limit_order_not_matched_and_canceled_fok_order(
     engine_l2.process_order(&mut limit_order, account_id);
 
     // Check we have received OrderAccepted and then OrderCanceled event
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     let event1 = saved_messages.first().unwrap();
     let accepted = match event1 {
         OrderEventAny::Accepted(accepted) => accepted,
@@ -1114,14 +1041,9 @@ fn test_process_limit_order_not_matched_and_canceled_fok_order(
 #[rstest]
 fn test_process_limit_order_matched_immediate_fill(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
 
@@ -1150,7 +1072,7 @@ fn test_process_limit_order_matched_immediate_fill(
     engine_l2.process_order(&mut limit_order, account_id);
 
     // Check we have received first OrderAccepted and then OrderFilled event
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     let event1 = saved_messages.first().unwrap();
     let accepted = match event1 {
         OrderEventAny::Accepted(accepted) => accepted,
@@ -1172,14 +1094,9 @@ fn test_process_limit_order_matched_immediate_fill(
 #[rstest]
 fn test_process_stop_market_order_triggered_rejected(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     // Create order matching engine which rejects stop orders
     let engine_config = OrderMatchingEngineConfig {
         reject_stop_orders: true,
@@ -1219,7 +1136,7 @@ fn test_process_stop_market_order_triggered_rejected(
     engine_l2.process_order(&mut stop_order, account_id);
 
     // Check we have received OrderRejected event
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     let event = saved_messages.first().unwrap();
     let rejected = match event {
         OrderEventAny::Rejected(rejected) => rejected,
@@ -1239,14 +1156,9 @@ fn test_process_stop_market_order_triggered_rejected(
 #[rstest]
 fn test_process_stop_market_order_valid_trigger_filled(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     // Create normal l2 engine without reject_stop_orders config param
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
@@ -1277,7 +1189,7 @@ fn test_process_stop_market_order_valid_trigger_filled(
     engine_l2.process_order(&mut stop_order, account_id);
 
     // Check we have received OrderFilled event
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     let fill = saved_messages.first().unwrap();
     let fill = match fill {
         OrderEventAny::Filled(fill) => fill,
@@ -1293,14 +1205,9 @@ fn test_process_stop_market_order_valid_trigger_filled(
 #[rstest]
 fn test_process_stop_market_order_valid_not_triggered_accepted(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
 
@@ -1330,7 +1237,7 @@ fn test_process_stop_market_order_valid_not_triggered_accepted(
     engine_l2.process_order(&mut stop_order, account_id);
 
     // Check we have received OrderAccepted event
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     let event = saved_messages.first().unwrap();
     let accepted = match event {
         OrderEventAny::Accepted(accepted) => accepted,
@@ -1344,14 +1251,9 @@ fn test_process_stop_market_order_valid_not_triggered_accepted(
 #[rstest]
 fn test_process_stop_limit_order_triggered_not_filled(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
 
@@ -1383,7 +1285,7 @@ fn test_process_stop_limit_order_triggered_not_filled(
     engine_l2.process_order(&mut stop_order, account_id);
 
     // Check we have received OrderAccepted and OrderTriggered
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     let event1 = saved_messages.first().unwrap();
     let accepted = match event1 {
         OrderEventAny::Accepted(accepted) => accepted,
@@ -1403,14 +1305,9 @@ fn test_process_stop_limit_order_triggered_not_filled(
 #[rstest]
 fn test_process_stop_limit_order_triggered_filled(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     // Create normal l2 engine without reject_stop_orders config param
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
@@ -1443,7 +1340,7 @@ fn test_process_stop_limit_order_triggered_filled(
     engine_l2.process_order(&mut stop_order, account_id);
 
     // Check we have received OrderAccepted, OrderTriggered and finally OrderFilled event
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 3);
     let event1 = saved_messages.first().unwrap();
     let accepted = match event1 {
@@ -1470,14 +1367,9 @@ fn test_process_stop_limit_order_triggered_filled(
 #[rstest]
 fn test_process_cancel_command_valid(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     // Create normal l2 engine without reject_stop_orders config param
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
@@ -1521,7 +1413,7 @@ fn test_process_cancel_command_valid(
     engine_l2.process_cancel(&cancel_command, account_id);
 
     // Check we have received OrderAccepted and then OrderCanceled event
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 2);
     let event1 = saved_messages.first().unwrap();
     let accepted = match event1 {
@@ -1540,13 +1432,8 @@ fn test_process_cancel_command_valid(
 #[rstest]
 fn test_process_cancel_command_order_not_found(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     // Create normal l2 engine without reject_stop_orders config param
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
@@ -1569,7 +1456,7 @@ fn test_process_cancel_command_order_not_found(
     engine_l2.process_cancel(&cancel_command, account_id);
 
     // Check we have received OrderCancelRejected event
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 1);
     let event = saved_messages.first().unwrap();
     let rejected = match event {
@@ -1586,14 +1473,9 @@ fn test_process_cancel_command_order_not_found(
 #[rstest]
 fn test_process_cancel_all_command(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let cache = Rc::new(RefCell::new(Cache::default()));
     let mut engine_l2 = get_order_matching_engine_l2(
         instrument_eth_usdt.clone(),
@@ -1682,7 +1564,7 @@ fn test_process_cancel_all_command(
     engine_l2.process_cancel_all(&cancel_all_command, account_id);
 
     // Check we have received 3 OrderAccepted and 2 OrderCanceled events
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 5);
     let event1 = saved_messages.first().unwrap();
     let accepted = match event1 {
@@ -1723,14 +1605,9 @@ fn test_process_cancel_all_command(
 #[rstest]
 fn test_process_batch_cancel_command(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let cache = Rc::new(RefCell::new(Cache::default()));
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), Some(cache), None, None, None);
@@ -1808,7 +1685,7 @@ fn test_process_batch_cancel_command(
     engine_l2.process_batch_cancel(&batch_cancel_command, account_id);
 
     // Check we have received 2 OrderAccepted and 2 OrderCanceled events
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 4);
     let event1 = saved_messages.first().unwrap();
     let accepted = match event1 {
@@ -1838,14 +1715,9 @@ fn test_process_batch_cancel_command(
 #[rstest]
 fn test_expire_order(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     // Create order matching engine with gtd support
     let engine_config = OrderMatchingEngineConfig {
         support_gtd_orders: true,
@@ -1909,7 +1781,7 @@ fn test_expire_order(
     engine_l2.process_trade_tick(&tick);
 
     // Check we have received OrderAccepted and then OrderExpired event
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 2);
     let event1 = saved_messages.first().unwrap();
     let accepted = match event1 {
@@ -1928,14 +1800,9 @@ fn test_expire_order(
 #[rstest]
 fn test_process_modify_order_rejected_not_found(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
 
@@ -1958,7 +1825,7 @@ fn test_process_modify_order_rejected_not_found(
     engine_l2.process_modify(&modify_order_command, account_id);
 
     // Check if we have received OrderModifyRejected event
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 1);
     let event = saved_messages.first().unwrap();
     let rejected = match event {
@@ -1971,14 +1838,9 @@ fn test_process_modify_order_rejected_not_found(
 #[rstest]
 fn test_update_limit_order_post_only_matched(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
 
@@ -2027,7 +1889,7 @@ fn test_update_limit_order_post_only_matched(
     engine_l2.process_modify(&modify_order_command, account_id);
 
     // Check that we have received OrderAccepted and then OrderModifyRejected event because of post only
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 2);
     let event1 = saved_messages.first().unwrap();
     let accepted = match event1 {
@@ -2052,14 +1914,9 @@ fn test_update_limit_order_post_only_matched(
 #[rstest]
 fn test_update_limit_order_valid(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
 
@@ -2109,7 +1966,7 @@ fn test_update_limit_order_valid(
 
     // Check that we have received OrderAccepted and then OrderUpdated
     // and then OrderFilled as limit order was matched immediately
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 3);
     let event1 = saved_messages.first().unwrap();
     let accepted = match event1 {
@@ -2137,14 +1994,9 @@ fn test_update_limit_order_valid(
 #[rstest]
 fn test_update_stop_market_order_valid(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
 
@@ -2194,7 +2046,7 @@ fn test_update_stop_market_order_valid(
     engine_l2.process_modify(&modify_order_command, account_id);
 
     // Check that we have received OrderAccepted and then OrderUpdated
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 2);
     let event1 = saved_messages.first().unwrap();
     let accepted = match event1 {
@@ -2214,14 +2066,9 @@ fn test_update_stop_market_order_valid(
 #[rstest]
 fn test_update_stop_limit_order_valid_update_not_triggered(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
 
@@ -2258,7 +2105,7 @@ fn test_update_stop_limit_order_valid_update_not_triggered(
     engine_l2.process_modify(&modify_order_command, account_id);
 
     // Check that we have received OrderAccepted and then OrderUpdated
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 2);
     let event1 = saved_messages.first().unwrap();
     let accepted = match event1 {
@@ -2278,14 +2125,9 @@ fn test_update_stop_limit_order_valid_update_not_triggered(
 #[rstest]
 fn test_process_market_if_touched_order_already_triggered(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
 
@@ -2316,7 +2158,7 @@ fn test_process_market_if_touched_order_already_triggered(
     engine_l2.process_order(&mut stop_market_order, account_id);
 
     // Check that order was filled immediately with correct price and quantity
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 1);
     let event = saved_messages.first().unwrap();
     let fill = match event {
@@ -2331,14 +2173,9 @@ fn test_process_market_if_touched_order_already_triggered(
 #[rstest]
 fn test_update_market_if_touched_order_valid(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
 
@@ -2374,7 +2211,7 @@ fn test_update_market_if_touched_order_valid(
     engine_l2.process_modify(&modify_order_command, account_id);
 
     // Check that we have received OrderAccepted and then OrderUpdated
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 2);
     let event1 = saved_messages.first().unwrap();
     let accepted = match event1 {
@@ -2394,14 +2231,9 @@ fn test_update_market_if_touched_order_valid(
 #[rstest]
 fn test_process_limit_if_touched_order_immediate_trigger_and_fill(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
 
@@ -2436,7 +2268,7 @@ fn test_process_limit_if_touched_order_immediate_trigger_and_fill(
 
     // Check that order was filled immediately with correct price and quantity
     // We should receive OrderAccepted, OrderTriggered and OrderFilled event
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 3);
     let event1 = saved_messages.first().unwrap();
     let accepted = match event1 {
@@ -2463,14 +2295,9 @@ fn test_process_limit_if_touched_order_immediate_trigger_and_fill(
 #[rstest]
 fn test_update_limit_if_touched_order_valid(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
 
@@ -2521,7 +2348,7 @@ fn test_update_limit_if_touched_order_valid(
     engine_l2.process_modify(&modify_order_command, account_id);
 
     // Check that we have received OrderAccepted and then OrderUpdated
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 2);
     let event1 = saved_messages.first().unwrap();
     let accepted = match event1 {
@@ -2541,14 +2368,9 @@ fn test_update_limit_if_touched_order_valid(
 #[rstest]
 fn test_process_market_to_limit_orders_not_fully_filled(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
 
@@ -2584,7 +2406,7 @@ fn test_process_market_to_limit_orders_not_fully_filled(
     // 1. OrderUpdated - order was updated to new limix price where market order stopped filling
     // 2. OrderFilled - market order which was filled emits filled event
     // 3. OrderAccepted - remaining quantity of market order is accepted as limit order
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 3);
     let event1 = saved_messages.first().unwrap();
     let updated = match event1 {
@@ -2608,7 +2430,7 @@ fn test_process_market_to_limit_orders_not_fully_filled(
     assert_eq!(fill.last_px, Price::from("1500.00"));
     assert_eq!(fill.last_qty, Quantity::from("1.000"));
     // Check that we have one resting limit order in the matching core
-    let resting_orders = engine_l2.core.get_orders();
+    let resting_orders = engine_l2.get_core().get_orders();
     assert_eq!(resting_orders.len(), 1);
     let first_order = resting_orders.first().unwrap();
     assert_eq!(first_order.client_order_id, client_order_id);
@@ -2617,14 +2439,9 @@ fn test_process_market_to_limit_orders_not_fully_filled(
 #[rstest]
 fn test_process_trailing_stop_orders_rejeceted_and_valid(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
 
@@ -2674,7 +2491,7 @@ fn test_process_trailing_stop_orders_rejeceted_and_valid(
 
     // Check that we have received OrderRejected for TrailingStopMarket order
     // and OrderAccepted for TrailingStopLimit order
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 2);
     let event1 = saved_messages.first().unwrap();
     let rejected = match event1 {
@@ -2699,14 +2516,9 @@ fn test_process_trailing_stop_orders_rejeceted_and_valid(
 #[rstest]
 fn test_updating_of_trailing_stop_market_order_with_no_trigger_price_set(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
 
@@ -2756,7 +2568,7 @@ fn test_updating_of_trailing_stop_market_order_with_no_trigger_price_set(
 
     // Check that we have received OrderAccepted and then OrderUpdated
     // with new trigger price of 1481.00 because of trailing offset of 1
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 2);
     let event1 = saved_messages.first().unwrap();
     let accepted = match event1 {
@@ -2776,14 +2588,9 @@ fn test_updating_of_trailing_stop_market_order_with_no_trigger_price_set(
 #[rstest]
 fn test_updating_of_contingent_orders(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let cache = Rc::new(RefCell::new(Cache::default()));
     // Create order matching engine which supports contingent orders
     let engine_config = OrderMatchingEngineConfig {
@@ -2872,7 +2679,7 @@ fn test_updating_of_contingent_orders(
     // 2. OrderAccepted for contingent stop market order
     // 3. OrderUpdated for primary limit order with new quantity of 2.000
     // 4. OrderUpdated for contingent stop market order with new quantity of 2.000
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 4);
     let event1 = saved_messages.first().unwrap();
     let accepted = match event1 {
@@ -2904,16 +2711,12 @@ fn test_updating_of_contingent_orders(
 
 #[rstest]
 fn test_reduce_only_order_exceeding_position_quantity(
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
     instrument_eth_usdt: InstrumentAny,
     engine_config: OrderMatchingEngineConfig,
 ) {
     // Reproduces bug where reduce-only order exceeding position causes panic
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
 
     let mut engine = get_order_matching_engine(
         instrument_eth_usdt.clone(),
@@ -2943,7 +2746,7 @@ fn test_reduce_only_order_exceeding_position_quantity(
 
     engine.process_order(&mut reduce_only_sell, account_id);
 
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert!(saved_messages.len() >= 2, "Should have at least 2 events");
 
     let has_quantity_update = saved_messages.iter().any(|event| {
@@ -2959,14 +2762,9 @@ fn test_reduce_only_order_exceeding_position_quantity(
 #[rstest]
 fn test_process_market_orders_with_protection_rejeceted_and_valid(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let config = OrderMatchingEngineConfig::new(
         false, false, false, false, false, false, false, false, false, false,
     )
@@ -3012,7 +2810,7 @@ fn test_process_market_orders_with_protection_rejeceted_and_valid(
 
     // Check that we receive an OrderRejected event for the protected market sell order
     // while the buy order is processed and filled (no OrderAccepted since use_market_order_acks=false)
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 3);
 
     let rejected = match saved_messages.first().unwrap() {
@@ -3041,14 +2839,9 @@ fn test_process_market_orders_with_protection_rejeceted_and_valid(
 #[rstest]
 fn test_process_stop_orders_with_protection_rejeceted_and_valid(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let config = OrderMatchingEngineConfig::new(
         false, false, false, false, false, false, false, false, false, false,
     )
@@ -3095,7 +2888,7 @@ fn test_process_stop_orders_with_protection_rejeceted_and_valid(
     engine_l2.process_order(&mut market_buy_order, account_id);
 
     // Check that we receive an OrderRejected event for the protected stop market sell order while the buy order is accepted
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 3);
     let event1 = saved_messages.first().unwrap();
     let rejected = match event1 {
@@ -3148,7 +2941,7 @@ fn test_process_monthly_bar_not_skipped(instrument_eth_usdt: InstrumentAny) {
 
     // Monthly bars should now be processed for execution (LAST price type bars update last price)
     assert!(
-        engine.core.is_last_initialized,
+        engine.get_core().is_last_initialized,
         "Monthly bar should be processed and update market state"
     );
 }
@@ -3179,7 +2972,7 @@ fn test_process_yearly_bar_not_skipped(instrument_eth_usdt: InstrumentAny) {
 
     // Yearly bars should now be processed for execution (LAST price type bars update last price)
     assert!(
-        engine.core.is_last_initialized,
+        engine.get_core().is_last_initialized,
         "Yearly bar should be processed and update market state"
     );
 }
@@ -3187,14 +2980,10 @@ fn test_process_yearly_bar_not_skipped(instrument_eth_usdt: InstrumentAny) {
 #[rstest]
 fn test_modify_partially_filled_order_quantity_below_filled_rejected(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
     // Tests that modifying a partially filled order to a quantity below filled_qty is rejected
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
 
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
@@ -3226,7 +3015,7 @@ fn test_modify_partially_filled_order_quantity_below_filled_rejected(
     engine_l2.process_order(&mut limit_order, account_id);
 
     // Order should be accepted and partially filled (0.5 of 1.0)
-    let saved_messages = get_order_event_handler_messages(order_event_handler.clone());
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 2);
     let event1 = saved_messages.first().unwrap();
     assert!(
@@ -3241,7 +3030,7 @@ fn test_modify_partially_filled_order_quantity_below_filled_rejected(
     assert_eq!(fill.last_qty, Quantity::from("0.500"));
 
     // Clear messages before modify
-    clear_order_event_handler_messages(order_event_handler.clone());
+    clear_order_event_handler_messages(&order_event_handler);
 
     // Attempt to modify quantity to 0.4, which is below filled_qty of 0.5
     let modify_order_command = ModifyOrder::new(
@@ -3261,7 +3050,7 @@ fn test_modify_partially_filled_order_quantity_below_filled_rejected(
     engine_l2.process_modify(&modify_order_command, account_id);
 
     // Should receive OrderModifyRejected
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 1);
     let event = saved_messages.first().unwrap();
     let rejected = match event {
@@ -3275,15 +3064,11 @@ fn test_modify_partially_filled_order_quantity_below_filled_rejected(
 #[rstest]
 fn test_ouo_child_cancelled_when_parent_leaves_zero(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
     // Tests that when parent order quantity is reduced to filled_qty (leaves=0),
     // the OUO child order is cancelled
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
 
     let cache = Rc::new(RefCell::new(Cache::default()));
     let engine_config = OrderMatchingEngineConfig {
@@ -3368,7 +3153,7 @@ fn test_ouo_child_cancelled_when_parent_leaves_zero(
     engine_l2.process_order(&mut contingent_stop_order, account_id);
 
     // Clear messages before modify
-    clear_order_event_handler_messages(order_event_handler.clone());
+    clear_order_event_handler_messages(&order_event_handler);
 
     // Modify primary order quantity to exactly filled_qty (0.6)
     // This makes leaves_qty = 0.6 - 0.6 = 0
@@ -3393,7 +3178,7 @@ fn test_ouo_child_cancelled_when_parent_leaves_zero(
     // 1. OrderUpdated for primary (quantity=0.600, matching filled_qty)
     // 2. OrderCanceled for contingent (parent leaves_qty is now 0)
     // 3. OrderCanceled for primary (fully filled after update, leaves_qty=0)
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     assert_eq!(saved_messages.len(), 3);
 
     let event1 = saved_messages.first().unwrap();
@@ -3425,16 +3210,11 @@ fn test_ouo_child_cancelled_when_parent_leaves_zero(
 #[case(OrderSide::Buy)]
 #[case(OrderSide::Sell)]
 fn test_liquidity_consumption_tracks_fills_at_price_level(
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
     instrument_eth_usdt: InstrumentAny,
     #[case] order_side: OrderSide,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let config = OrderMatchingEngineConfig {
         liquidity_consumption: true,
         ..Default::default()
@@ -3496,7 +3276,7 @@ fn test_liquidity_consumption_tracks_fills_at_price_level(
         .build();
     engine_l2.process_order(&mut order3, account_id);
 
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     let filled_events: Vec<_> = saved_messages
         .iter()
         .filter_map(|event| match event {
@@ -3515,17 +3295,12 @@ fn test_liquidity_consumption_tracks_fills_at_price_level(
 #[case(OrderSide::Buy, OrderSide::Sell)]
 #[case(OrderSide::Sell, OrderSide::Buy)]
 fn test_liquidity_consumption_resets_on_fresh_data(
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
     instrument_eth_usdt: InstrumentAny,
     #[case] order_side: OrderSide,
     #[case] book_side: OrderSide,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let config = OrderMatchingEngineConfig {
         liquidity_consumption: true,
         ..Default::default()
@@ -3608,7 +3383,7 @@ fn test_liquidity_consumption_resets_on_fresh_data(
         .build();
     engine_l2.process_order(&mut order2, account_id);
 
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     let filled_events: Vec<_> = saved_messages
         .iter()
         .filter_map(|event| match event {
@@ -3626,16 +3401,11 @@ fn test_liquidity_consumption_resets_on_fresh_data(
 #[case(OrderSide::Buy)]
 #[case(OrderSide::Sell)]
 fn test_liquidity_consumption_off_allows_repeated_fills(
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
     instrument_eth_usdt: InstrumentAny,
     #[case] order_side: OrderSide,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let config = OrderMatchingEngineConfig {
         liquidity_consumption: false,
         ..Default::default()
@@ -3688,7 +3458,7 @@ fn test_liquidity_consumption_off_allows_repeated_fills(
         .build();
     engine_l2.process_order(&mut order2, account_id);
 
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     let filled_events: Vec<_> = saved_messages
         .iter()
         .filter_map(|event| match event {
@@ -3715,17 +3485,12 @@ fn test_liquidity_consumption_off_allows_repeated_fills(
 #[case(OrderSide::Buy, OrderSide::Sell)]
 #[case(OrderSide::Sell, OrderSide::Buy)]
 fn test_liquidity_consumption_unchanged_levels_stay_depleted(
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
     instrument_eth_usdt: InstrumentAny,
     #[case] order_side: OrderSide,
     #[case] book_side: OrderSide,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let config = OrderMatchingEngineConfig {
         liquidity_consumption: true,
         ..Default::default()
@@ -3833,7 +3598,7 @@ fn test_liquidity_consumption_unchanged_levels_stay_depleted(
         .build();
     engine_l2.process_order(&mut order2, account_id);
 
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     let filled_events: Vec<_> = saved_messages
         .iter()
         .filter_map(|event| match event {
@@ -3874,14 +3639,9 @@ fn test_liquidity_consumption_unchanged_levels_stay_depleted(
 #[rstest]
 fn test_stop_limit_triggered_not_filled_single_accept(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
 
@@ -3915,7 +3675,7 @@ fn test_stop_limit_triggered_not_filled_single_accept(
     engine_l2.process_order(&mut stop_order, account_id);
 
     // Verify: should have exactly 1 Accepted event and 1 Triggered event
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     let accepted_count = saved_messages
         .iter()
         .filter(|e| matches!(e, OrderEventAny::Accepted(_)))
@@ -3932,7 +3692,7 @@ fn test_stop_limit_triggered_not_filled_single_accept(
     );
 
     // Verify order exists in core exactly once
-    let orders = engine_l2.core.get_orders();
+    let orders = engine_l2.get_core().get_orders();
     let matching_order_count = orders
         .iter()
         .filter(|o| o.client_order_id == client_order_id)
@@ -3949,14 +3709,9 @@ fn test_stop_limit_triggered_not_filled_single_accept(
 #[rstest]
 fn test_modify_limit_order_price_persists_to_core(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
 
@@ -3989,10 +3744,10 @@ fn test_modify_limit_order_price_persists_to_core(
     engine_l2.process_order(&mut limit_order, account_id);
 
     // Verify order is in core at original price
-    let order_in_core = engine_l2.core.get_order(client_order_id).unwrap();
+    let order_in_core = engine_l2.get_core().get_order(client_order_id).unwrap();
     assert_eq!(order_in_core.limit_price, Some(Price::from("1490.00")));
 
-    clear_order_event_handler_messages(order_event_handler);
+    clear_order_event_handler_messages(&order_event_handler);
 
     // Modify order to new price 1495 (still below ask, won't fill)
     let modify_command = ModifyOrder::new(
@@ -4013,7 +3768,7 @@ fn test_modify_limit_order_price_persists_to_core(
     engine_l2.process_modify(&modify_command, account_id);
 
     // Verify: order in core should have new price
-    let order_in_core = engine_l2.core.get_order(client_order_id).unwrap();
+    let order_in_core = engine_l2.get_core().get_order(client_order_id).unwrap();
     assert_eq!(
         order_in_core.limit_price,
         Some(Price::from("1495.00")),
@@ -4027,14 +3782,9 @@ fn test_modify_limit_order_price_persists_to_core(
 #[rstest]
 fn test_rejected_modify_does_not_change_book_priority(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
 
@@ -4067,9 +3817,9 @@ fn test_rejected_modify_does_not_change_book_priority(
     engine_l2.process_order(&mut limit_order, account_id);
 
     // Get initial order count in core
-    let initial_order_count = engine_l2.core.get_orders().len();
+    let initial_order_count = engine_l2.get_core().get_orders().len();
 
-    clear_order_event_handler_messages(order_event_handler.clone());
+    clear_order_event_handler_messages(&order_event_handler);
 
     // Try to modify with invalid precision (instrument has 2 decimal places for price)
     let modify_command = ModifyOrder::new(
@@ -4090,7 +3840,7 @@ fn test_rejected_modify_does_not_change_book_priority(
     engine_l2.process_modify(&modify_command, account_id);
 
     // Verify: modify should be rejected
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     let rejected_count = saved_messages
         .iter()
         .filter(|e| matches!(e, OrderEventAny::ModifyRejected(_)))
@@ -4098,7 +3848,7 @@ fn test_rejected_modify_does_not_change_book_priority(
     assert_eq!(rejected_count, 1, "Modify should be rejected");
 
     // Verify: order should still be in core with original price
-    let order_in_core = engine_l2.core.get_order(client_order_id).unwrap();
+    let order_in_core = engine_l2.get_core().get_order(client_order_id).unwrap();
     assert_eq!(
         order_in_core.limit_price,
         Some(Price::from("1490.00")),
@@ -4106,7 +3856,7 @@ fn test_rejected_modify_does_not_change_book_priority(
     );
 
     // Verify: order count unchanged (not deleted and re-added)
-    let final_order_count = engine_l2.core.get_orders().len();
+    let final_order_count = engine_l2.get_core().get_orders().len();
     assert_eq!(
         initial_order_count, final_order_count,
         "Order count should be unchanged"
@@ -4118,14 +3868,9 @@ fn test_rejected_modify_does_not_change_book_priority(
 #[rstest]
 fn test_netting_mode_fills_have_no_position_id(
     instrument_eth_usdt: InstrumentAny,
-    order_event_handler: ShareableMessageHandler,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
     account_id: AccountId,
 ) {
-    msgbus::register_any(
-        MessagingSwitchboard::exec_engine_process(),
-        order_event_handler.clone(),
-    );
-
     // Create engine in netting mode (default)
     let mut engine_l2 =
         get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, None, None);
@@ -4158,7 +3903,7 @@ fn test_netting_mode_fills_have_no_position_id(
     engine_l2.process_order(&mut market_order, account_id);
 
     // Get fill event
-    let saved_messages = get_order_event_handler_messages(order_event_handler);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
     let fill_event = saved_messages
         .iter()
         .find_map(|e| match e {
@@ -4178,3 +3923,452 @@ fn test_netting_mode_fills_have_no_position_id(
 // matching engine's handler mechanism for filling resting orders via iteration is not yet
 // implemented (marked TBD in engine.rs). The trade consumption tracking code in
 // determine_limit_price_and_volume is ready but can't be exercised until handlers are wired up.
+
+/// Tests BUY MarketIfTouchedOrder fills at trigger price (not bar extreme) during bar processing.
+///
+/// Note: Manually triggers the stop order because the handler mechanism is TBD.
+#[rstest]
+fn test_market_if_touched_buy_fills_at_trigger_price(
+    instrument_eth_usdt: InstrumentAny,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
+    account_id: AccountId,
+) {
+    let config = OrderMatchingEngineConfig {
+        bar_execution: true,
+        ..Default::default()
+    };
+    let mut engine =
+        get_order_matching_engine(instrument_eth_usdt.clone(), None, None, Some(config), None);
+
+    let bar_type = BarType::from("ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL");
+    let init_bar = Bar {
+        bar_type,
+        open: Price::from("1500.00"),
+        high: Price::from("1510.00"),
+        low: Price::from("1490.00"),
+        close: Price::from("1500.00"),
+        volume: Quantity::from("100.000"),
+        ts_event: UnixNanos::from(1_000_000_000),
+        ts_init: UnixNanos::from(1_000_000_000),
+    };
+    engine.process_bar(&init_bar);
+    clear_order_event_handler_messages(&order_event_handler);
+
+    // BUY MIT at 1480 triggers when price touches from above
+    let client_order_id = ClientOrderId::from("O-19700101-000000-001-001-1");
+    let mut mit_order = OrderTestBuilder::new(OrderType::MarketIfTouched)
+        .instrument_id(instrument_eth_usdt.id())
+        .side(OrderSide::Buy)
+        .trigger_price(Price::from("1480.00"))
+        .quantity(Quantity::from("1.000"))
+        .client_order_id(client_order_id)
+        .submit(true)
+        .build();
+    engine.process_order(&mut mit_order, account_id);
+    clear_order_event_handler_messages(&order_event_handler);
+
+    // Bar low at 1470 crosses trigger at 1480
+    let _trigger_bar = Bar {
+        bar_type,
+        open: Price::from("1500.00"),
+        high: Price::from("1510.00"),
+        low: Price::from("1470.00"),
+        close: Price::from("1490.00"),
+        volume: Quantity::from("100.000"),
+        ts_event: UnixNanos::from(2_000_000_000),
+        ts_init: UnixNanos::from(2_000_000_000),
+    };
+
+    // Simulate bar H/L/C processing (handler not yet wired)
+    engine.set_fill_at_market(false);
+    engine.trigger_stop_order(client_order_id);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
+    let fill_event = saved_messages
+        .iter()
+        .find_map(|e| match e {
+            OrderEventAny::Filled(fill) => Some(fill),
+            _ => None,
+        })
+        .expect("Expected a fill event");
+
+    assert_eq!(
+        fill_event.last_px,
+        Price::from("1480.00"),
+        "BUY MIT should fill at trigger price 1480.00, not bar low 1470.00"
+    );
+}
+
+/// Tests SELL MarketIfTouchedOrder fills at trigger price (not bar extreme) during bar processing.
+///
+/// Note: Manually triggers the stop order because the handler mechanism is TBD.
+#[rstest]
+fn test_market_if_touched_sell_fills_at_trigger_price(
+    instrument_eth_usdt: InstrumentAny,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
+    account_id: AccountId,
+) {
+    let config = OrderMatchingEngineConfig {
+        bar_execution: true,
+        ..Default::default()
+    };
+    let mut engine =
+        get_order_matching_engine(instrument_eth_usdt.clone(), None, None, Some(config), None);
+
+    let bar_type = BarType::from("ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL");
+    let init_bar = Bar {
+        bar_type,
+        open: Price::from("1500.00"),
+        high: Price::from("1510.00"),
+        low: Price::from("1490.00"),
+        close: Price::from("1500.00"),
+        volume: Quantity::from("100.000"),
+        ts_event: UnixNanos::from(1_000_000_000),
+        ts_init: UnixNanos::from(1_000_000_000),
+    };
+    engine.process_bar(&init_bar);
+    clear_order_event_handler_messages(&order_event_handler);
+
+    // SELL MIT at 1520 triggers when price touches from below
+    let client_order_id = ClientOrderId::from("O-19700101-000000-001-001-1");
+    let mut mit_order = OrderTestBuilder::new(OrderType::MarketIfTouched)
+        .instrument_id(instrument_eth_usdt.id())
+        .side(OrderSide::Sell)
+        .trigger_price(Price::from("1520.00"))
+        .quantity(Quantity::from("1.000"))
+        .client_order_id(client_order_id)
+        .submit(true)
+        .build();
+    engine.process_order(&mut mit_order, account_id);
+    clear_order_event_handler_messages(&order_event_handler);
+
+    // Bar high at 1530 crosses trigger at 1520
+    let _trigger_bar = Bar {
+        bar_type,
+        open: Price::from("1500.00"),
+        high: Price::from("1530.00"),
+        low: Price::from("1490.00"),
+        close: Price::from("1510.00"),
+        volume: Quantity::from("100.000"),
+        ts_event: UnixNanos::from(2_000_000_000),
+        ts_init: UnixNanos::from(2_000_000_000),
+    };
+
+    // Simulate bar H/L/C processing (handler not yet wired)
+    engine.set_fill_at_market(false);
+    engine.trigger_stop_order(client_order_id);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
+    let fill_event = saved_messages
+        .iter()
+        .find_map(|e| match e {
+            OrderEventAny::Filled(fill) => Some(fill),
+            _ => None,
+        })
+        .expect("Expected a fill event");
+
+    assert_eq!(
+        fill_event.last_px,
+        Price::from("1520.00"),
+        "SELL MIT should fill at trigger price 1520.00, not bar high 1530.00"
+    );
+}
+
+/// Tests BUY MIT fills at trigger price with liquidity consumption enabled.
+///
+/// Regression: Liquidity consumption must not discard fills at trigger price
+/// where no book liquidity exists (gap scenario).
+#[rstest]
+fn test_market_if_touched_buy_fills_at_trigger_price_with_liquidity_consumption(
+    instrument_eth_usdt: InstrumentAny,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
+    account_id: AccountId,
+) {
+    let config = OrderMatchingEngineConfig {
+        bar_execution: true,
+        liquidity_consumption: true,
+        ..Default::default()
+    };
+    let mut engine =
+        get_order_matching_engine(instrument_eth_usdt.clone(), None, None, Some(config), None);
+
+    let bar_type = BarType::from("ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL");
+    let init_bar = Bar {
+        bar_type,
+        open: Price::from("1500.00"),
+        high: Price::from("1510.00"),
+        low: Price::from("1490.00"),
+        close: Price::from("1500.00"),
+        volume: Quantity::from("100.000"),
+        ts_event: UnixNanos::from(1_000_000_000),
+        ts_init: UnixNanos::from(1_000_000_000),
+    };
+    engine.process_bar(&init_bar);
+    clear_order_event_handler_messages(&order_event_handler);
+
+    // BUY MIT at 1480 triggers when price touches from above
+    let client_order_id = ClientOrderId::from("O-19700101-000000-001-001-1");
+    let mut mit_order = OrderTestBuilder::new(OrderType::MarketIfTouched)
+        .instrument_id(instrument_eth_usdt.id())
+        .side(OrderSide::Buy)
+        .trigger_price(Price::from("1480.00"))
+        .quantity(Quantity::from("1.000"))
+        .client_order_id(client_order_id)
+        .submit(true)
+        .build();
+    engine.process_order(&mut mit_order, account_id);
+    clear_order_event_handler_messages(&order_event_handler);
+
+    // Simulate bar H/L/C processing (handler not yet wired)
+    engine.set_fill_at_market(false);
+    engine.trigger_stop_order(client_order_id);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
+    let fill_event = saved_messages
+        .iter()
+        .find_map(|e| match e {
+            OrderEventAny::Filled(fill) => Some(fill),
+            _ => None,
+        })
+        .expect("Expected a fill event");
+
+    assert_eq!(
+        fill_event.last_px,
+        Price::from("1480.00"),
+        "BUY MIT should fill at trigger price with liquidity consumption enabled"
+    );
+}
+
+/// Tests SELL MIT fills at trigger price with liquidity consumption enabled.
+///
+/// Regression: Liquidity consumption must not discard fills at trigger price
+/// where no book liquidity exists (gap scenario).
+#[rstest]
+fn test_market_if_touched_sell_fills_at_trigger_price_with_liquidity_consumption(
+    instrument_eth_usdt: InstrumentAny,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
+    account_id: AccountId,
+) {
+    let config = OrderMatchingEngineConfig {
+        bar_execution: true,
+        liquidity_consumption: true,
+        ..Default::default()
+    };
+    let mut engine =
+        get_order_matching_engine(instrument_eth_usdt.clone(), None, None, Some(config), None);
+
+    let bar_type = BarType::from("ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL");
+    let init_bar = Bar {
+        bar_type,
+        open: Price::from("1500.00"),
+        high: Price::from("1510.00"),
+        low: Price::from("1490.00"),
+        close: Price::from("1500.00"),
+        volume: Quantity::from("100.000"),
+        ts_event: UnixNanos::from(1_000_000_000),
+        ts_init: UnixNanos::from(1_000_000_000),
+    };
+    engine.process_bar(&init_bar);
+    clear_order_event_handler_messages(&order_event_handler);
+
+    // SELL MIT at 1520 triggers when price touches from below
+    let client_order_id = ClientOrderId::from("O-19700101-000000-001-001-1");
+    let mut mit_order = OrderTestBuilder::new(OrderType::MarketIfTouched)
+        .instrument_id(instrument_eth_usdt.id())
+        .side(OrderSide::Sell)
+        .trigger_price(Price::from("1520.00"))
+        .quantity(Quantity::from("1.000"))
+        .client_order_id(client_order_id)
+        .submit(true)
+        .build();
+    engine.process_order(&mut mit_order, account_id);
+    clear_order_event_handler_messages(&order_event_handler);
+
+    // Simulate bar H/L/C processing (handler not yet wired)
+    engine.set_fill_at_market(false);
+    engine.trigger_stop_order(client_order_id);
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
+    let fill_event = saved_messages
+        .iter()
+        .find_map(|e| match e {
+            OrderEventAny::Filled(fill) => Some(fill),
+            _ => None,
+        })
+        .expect("Expected a fill event");
+
+    assert_eq!(
+        fill_event.last_px,
+        Price::from("1520.00"),
+        "SELL MIT should fill at trigger price with liquidity consumption enabled"
+    );
+}
+
+/// Regression test for liquidity consumption tracking at multiple price levels.
+///
+/// When an order fills across multiple price levels, consumption must be tracked
+/// separately at each original book price level. This test verifies that after
+/// consuming liquidity at multiple levels, subsequent orders cannot access that
+/// consumed liquidity.
+#[rstest]
+#[case(OrderSide::Buy)]
+#[case(OrderSide::Sell)]
+fn test_liquidity_consumption_tracks_fills_at_multiple_price_levels(
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
+    account_id: AccountId,
+    instrument_eth_usdt: InstrumentAny,
+    #[case] order_side: OrderSide,
+) {
+    let config = OrderMatchingEngineConfig {
+        liquidity_consumption: true,
+        ..Default::default()
+    };
+    let mut engine_l2 =
+        get_order_matching_engine_l2(instrument_eth_usdt.clone(), None, None, Some(config), None);
+
+    if order_side == OrderSide::Buy {
+        let bid_delta = OrderBookDeltaTestBuilder::new(instrument_eth_usdt.id())
+            .book_action(BookAction::Add)
+            .book_order(BookOrder::new(
+                OrderSide::Buy,
+                Price::from("900.00"),
+                Quantity::from("1000.000"),
+                100,
+            ))
+            .build();
+        engine_l2.process_order_book_delta(&bid_delta).unwrap();
+
+        let ask1 = OrderBookDeltaTestBuilder::new(instrument_eth_usdt.id())
+            .book_action(BookAction::Add)
+            .book_order(BookOrder::new(
+                OrderSide::Sell,
+                Price::from("999.00"),
+                Quantity::from("50.000"),
+                1,
+            ))
+            .build();
+        engine_l2.process_order_book_delta(&ask1).unwrap();
+
+        let ask2 = OrderBookDeltaTestBuilder::new(instrument_eth_usdt.id())
+            .book_action(BookAction::Add)
+            .book_order(BookOrder::new(
+                OrderSide::Sell,
+                Price::from("1000.00"),
+                Quantity::from("50.000"),
+                2,
+            ))
+            .build();
+        engine_l2.process_order_book_delta(&ask2).unwrap();
+
+        let ask3 = OrderBookDeltaTestBuilder::new(instrument_eth_usdt.id())
+            .book_action(BookAction::Add)
+            .book_order(BookOrder::new(
+                OrderSide::Sell,
+                Price::from("1001.00"),
+                Quantity::from("100.000"),
+                3,
+            ))
+            .build();
+        engine_l2.process_order_book_delta(&ask3).unwrap();
+    } else {
+        let ask_delta = OrderBookDeltaTestBuilder::new(instrument_eth_usdt.id())
+            .book_action(BookAction::Add)
+            .book_order(BookOrder::new(
+                OrderSide::Sell,
+                Price::from("1100.00"),
+                Quantity::from("1000.000"),
+                100,
+            ))
+            .build();
+        engine_l2.process_order_book_delta(&ask_delta).unwrap();
+
+        let bid1 = OrderBookDeltaTestBuilder::new(instrument_eth_usdt.id())
+            .book_action(BookAction::Add)
+            .book_order(BookOrder::new(
+                OrderSide::Buy,
+                Price::from("1001.00"),
+                Quantity::from("50.000"),
+                1,
+            ))
+            .build();
+        engine_l2.process_order_book_delta(&bid1).unwrap();
+
+        let bid2 = OrderBookDeltaTestBuilder::new(instrument_eth_usdt.id())
+            .book_action(BookAction::Add)
+            .book_order(BookOrder::new(
+                OrderSide::Buy,
+                Price::from("1000.00"),
+                Quantity::from("50.000"),
+                2,
+            ))
+            .build();
+        engine_l2.process_order_book_delta(&bid2).unwrap();
+
+        let bid3 = OrderBookDeltaTestBuilder::new(instrument_eth_usdt.id())
+            .book_action(BookAction::Add)
+            .book_order(BookOrder::new(
+                OrderSide::Buy,
+                Price::from("999.00"),
+                Quantity::from("100.000"),
+                3,
+            ))
+            .build();
+        engine_l2.process_order_book_delta(&bid3).unwrap();
+    }
+
+    let limit_price = Price::from("1000.00");
+
+    let mut order1 = OrderTestBuilder::new(OrderType::Limit)
+        .instrument_id(instrument_eth_usdt.id())
+        .side(order_side)
+        .price(limit_price)
+        .quantity(Quantity::from("100.000"))
+        .client_order_id(ClientOrderId::from("O-19700101-000000-001-001-1"))
+        .submit(true)
+        .build();
+    engine_l2.process_order(&mut order1, account_id);
+
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
+    let order1_fills: Vec<_> = saved_messages
+        .iter()
+        .filter_map(|event| match event {
+            OrderEventAny::Filled(fill) if fill.client_order_id.as_str().ends_with("-1") => {
+                Some(fill)
+            }
+            _ => None,
+        })
+        .collect();
+
+    let total_order1: f64 = order1_fills.iter().map(|f| f.last_qty.as_f64()).sum();
+    assert!(
+        (total_order1 - 100.0).abs() < 0.001,
+        "First order should fill 100, got {total_order1}"
+    );
+
+    clear_order_event_handler_messages(&order_event_handler);
+
+    let mut order2 = OrderTestBuilder::new(OrderType::Limit)
+        .instrument_id(instrument_eth_usdt.id())
+        .side(order_side)
+        .price(limit_price)
+        .quantity(Quantity::from("50.000"))
+        .client_order_id(ClientOrderId::from("O-19700101-000000-001-001-2"))
+        .submit(true)
+        .build();
+    engine_l2.process_order(&mut order2, account_id);
+
+    let saved_messages = get_order_event_handler_messages(&order_event_handler);
+    let order2_fills: Vec<_> = saved_messages
+        .iter()
+        .filter_map(|event| match event {
+            OrderEventAny::Filled(fill) if fill.client_order_id.as_str().ends_with("-2") => {
+                Some(fill)
+            }
+            _ => None,
+        })
+        .collect();
+
+    let total_order2: f64 = order2_fills.iter().map(|f| f.last_qty.as_f64()).sum();
+    assert!(
+        total_order2 < 0.001,
+        "Second order should NOT fill - both price levels should be consumed. \
+         Got fill of {total_order2}. If this fails, consumption was incorrectly \
+         tracked at wrong price levels."
+    );
+}

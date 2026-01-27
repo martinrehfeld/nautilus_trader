@@ -162,17 +162,18 @@ impl FeedHandler {
     async fn send_with_retry(
         &self,
         payload: String,
-        rate_limit_keys: Option<Vec<String>>,
+        rate_limit_keys: Option<&[Ustr]>,
     ) -> Result<(), DydxWsError> {
+        let keys_owned: Option<Vec<Ustr>> = rate_limit_keys.map(|k| k.to_vec());
         self.retry_manager
             .execute_with_retry(
                 "websocket_send",
                 || {
                     let payload = payload.clone();
-                    let keys = rate_limit_keys.clone();
+                    let keys = keys_owned.clone();
                     async move {
                         self.client
-                            .send_text(payload, keys)
+                            .send_text(payload, keys.as_deref())
                             .await
                             .map_err(|e| DydxWsError::ClientError(format!("Send failed: {e}")))
                     }
@@ -185,7 +186,7 @@ impl FeedHandler {
 
     /// Main processing loop for the handler.
     pub async fn run(&mut self) {
-        log::info!("WebSocket handler started");
+        log::debug!("WebSocket handler started");
         loop {
             tokio::select! {
                 Some(cmd) = self.cmd_rx.recv() => {
@@ -255,12 +256,12 @@ impl FeedHandler {
                                     serde_json::from_value::<DydxWsConnectedMsg>(val)
                                         .map(DydxWsMessage::Connected)
                                 } else if meta.is_subscribed() {
-                                    log::info!("Processing subscribed message via fallback path");
+                                    log::debug!("Processing subscribed message via fallback path");
                                     if let Ok(sub_msg) =
                                         serde_json::from_value::<DydxWsSubscriptionMsg>(val.clone())
                                     {
                                         if sub_msg.channel == DydxWsChannel::Subaccounts {
-                                            log::info!(
+                                            log::debug!(
                                                 "Parsing subaccounts subscription (fallback)"
                                             );
                                             serde_json::from_value::<DydxWsSubaccountsSubscribed>(
@@ -491,10 +492,7 @@ impl FeedHandler {
             }
             HandlerCommand::SendText(text) => {
                 if let Err(e) = self
-                    .send_with_retry(
-                        text,
-                        Some(vec![DYDX_RATE_LIMIT_KEY_SUBSCRIPTION.to_string()]),
-                    )
+                    .send_with_retry(text, Some(DYDX_RATE_LIMIT_KEY_SUBSCRIPTION.as_slice()))
                     .await
                 {
                     log::error!("Failed to send WebSocket text after retries: {e}");
@@ -537,10 +535,7 @@ impl FeedHandler {
             self.subscriptions.mark_subscribe(&topic);
 
             if let Err(e) = self
-                .send_with_retry(
-                    payload,
-                    Some(vec![DYDX_RATE_LIMIT_KEY_SUBSCRIPTION.to_string()]),
-                )
+                .send_with_retry(payload, Some(DYDX_RATE_LIMIT_KEY_SUBSCRIPTION.as_slice()))
                 .await
             {
                 self.subscriptions.mark_failure(&topic);
@@ -573,7 +568,7 @@ impl FeedHandler {
                 Ok(None)
             }
             DydxWsMessage::SubaccountsSubscribed(msg) => {
-                log::info!("Subaccounts subscribed with initial state");
+                log::debug!("Subaccounts subscribed with initial state");
                 let topic = self.topic_from_msg(&msg.channel, &Some(msg.id.clone()));
                 self.subscriptions.confirm_subscribe(&topic);
                 self.parse_subaccounts_subscribed(&msg)
@@ -1100,7 +1095,7 @@ impl FeedHandler {
         &self,
         data: &DydxWsChannelDataMsg,
     ) -> DydxWsResult<Option<NautilusWsMessage>> {
-        log::info!(
+        log::debug!(
             "Parsing subaccounts channel data (msg_type={:?})",
             data.msg_type
         );
@@ -1115,7 +1110,7 @@ impl FeedHandler {
         if has_orders || has_fills {
             // Forward raw channel data to execution client for parsing
             // The execution client has the clob_pair_id and instrument mappings needed
-            log::info!(
+            log::debug!(
                 "Received {} order(s), {} fill(s) - forwarding to execution client",
                 contents.orders.as_ref().map_or(0, |o| o.len()),
                 contents.fills.as_ref().map_or(0, |f| f.len())
