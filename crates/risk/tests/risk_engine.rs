@@ -2281,25 +2281,36 @@ fn test_submit_order_list_buys_when_over_free_balance_then_denies(
 
     simple_cache.add_quote(quote_audusd).unwrap();
 
-    let mut risk_engine =
-        get_risk_engine(Some(Rc::new(RefCell::new(simple_cache))), None, None, false);
     let order1 = OrderTestBuilder::new(OrderType::Market)
         .instrument_id(instrument_audusd.id())
+        .client_order_id(ClientOrderId::from("O-001"))
         .side(OrderSide::Buy)
         .quantity(Quantity::from_str("4920").unwrap())
         .build();
 
     let order2 = OrderTestBuilder::new(OrderType::Market)
         .instrument_id(instrument_audusd.id())
+        .client_order_id(ClientOrderId::from("O-002"))
         .side(OrderSide::Buy)
         .quantity(Quantity::from_str("5653").unwrap()) // <--- over free balance
         .build();
 
+    simple_cache
+        .add_order(order1.clone(), None, Some(client_id_binance), true)
+        .unwrap();
+    simple_cache
+        .add_order(order2.clone(), None, Some(client_id_binance), true)
+        .unwrap();
+
+    let mut risk_engine =
+        get_risk_engine(Some(Rc::new(RefCell::new(simple_cache))), None, None, false);
+
+    let orders = [order1, order2];
     let order_list = OrderList::new(
         OrderListId::new("1"),
         instrument_audusd.id(),
         StrategyId::new("S-001"),
-        vec![order1, order2],
+        vec![orders[0].client_order_id(), orders[1].client_order_id()],
         risk_engine.clock().borrow().timestamp_ns(),
     );
 
@@ -2307,8 +2318,8 @@ fn test_submit_order_list_buys_when_over_free_balance_then_denies(
         trader_id,
         Some(client_id_binance),
         strategy_id_ema_cross,
-        instrument_audusd.id(),
         order_list,
+        orders.iter().map(|o| o.init_event().clone()).collect(),
         None,
         None,
         None, // params
@@ -2360,25 +2371,37 @@ fn test_submit_order_list_sells_when_over_free_balance_then_denies(
 
     simple_cache.add_quote(quote_audusd).unwrap();
 
-    let mut risk_engine =
-        get_risk_engine(Some(Rc::new(RefCell::new(simple_cache))), None, None, false);
     let order1 = OrderTestBuilder::new(OrderType::Market)
         .instrument_id(instrument_audusd.id())
+        .client_order_id(ClientOrderId::from("O-001"))
         .side(OrderSide::Sell)
         .quantity(Quantity::from_str("4920").unwrap())
         .build();
 
     let order2 = OrderTestBuilder::new(OrderType::Market)
         .instrument_id(instrument_audusd.id())
+        .client_order_id(ClientOrderId::from("O-002"))
         .side(OrderSide::Sell)
         .quantity(Quantity::from_str("5653").unwrap()) // <--- over free balance
         .build();
+
+    let orders = [order1, order2];
+
+    simple_cache
+        .add_order(orders[0].clone(), None, Some(client_id_binance), true)
+        .unwrap();
+    simple_cache
+        .add_order(orders[1].clone(), None, Some(client_id_binance), true)
+        .unwrap();
+
+    let mut risk_engine =
+        get_risk_engine(Some(Rc::new(RefCell::new(simple_cache))), None, None, false);
 
     let order_list = OrderList::new(
         OrderListId::new("1"),
         instrument_audusd.id(),
         StrategyId::new("S-001"),
-        vec![order1, order2],
+        vec![orders[0].client_order_id(), orders[1].client_order_id()],
         risk_engine.clock().borrow().timestamp_ns(),
     );
 
@@ -2386,8 +2409,8 @@ fn test_submit_order_list_sells_when_over_free_balance_then_denies(
         trader_id,
         Some(client_id_binance),
         strategy_id_ema_cross,
-        instrument_audusd.id(),
         order_list,
+        orders.iter().map(|o| o.init_event().clone()).collect(),
         None,
         None,
         None, // params
@@ -2563,16 +2586,16 @@ fn test_submit_order_list_when_trading_halted_then_denies_orders(
         )))
         .unwrap();
 
-    let mut risk_engine =
-        get_risk_engine(Some(Rc::new(RefCell::new(simple_cache))), None, None, false);
     let entry = OrderTestBuilder::new(OrderType::Market)
         .instrument_id(instrument_audusd.id())
+        .client_order_id(ClientOrderId::from("O-001"))
         .side(OrderSide::Buy)
         .quantity(Quantity::from_str("100").unwrap())
         .build();
 
     let stop_loss = OrderTestBuilder::new(OrderType::StopMarket)
         .instrument_id(instrument_audusd.id())
+        .client_order_id(ClientOrderId::from("O-002"))
         .side(OrderSide::Buy)
         .quantity(Quantity::from_str("100").unwrap())
         .trigger_price(Price::new(0.1, 1))
@@ -2580,16 +2603,36 @@ fn test_submit_order_list_when_trading_halted_then_denies_orders(
 
     let take_profit = OrderTestBuilder::new(OrderType::Limit)
         .instrument_id(instrument_audusd.id())
+        .client_order_id(ClientOrderId::from("O-003"))
         .side(OrderSide::Buy)
         .quantity(Quantity::from_str("100").unwrap())
         .price(Price::new(0.11, 2))
         .build();
 
+    let orders = [entry, stop_loss, take_profit];
+
+    simple_cache
+        .add_order(orders[0].clone(), None, Some(client_id_binance), true)
+        .unwrap();
+    simple_cache
+        .add_order(orders[1].clone(), None, Some(client_id_binance), true)
+        .unwrap();
+    simple_cache
+        .add_order(orders[2].clone(), None, Some(client_id_binance), true)
+        .unwrap();
+
+    let mut risk_engine =
+        get_risk_engine(Some(Rc::new(RefCell::new(simple_cache))), None, None, false);
+
     let bracket = OrderList::new(
         OrderListId::new("1"),
         instrument_audusd.id(),
         StrategyId::new("S-001"),
-        vec![entry, stop_loss, take_profit],
+        vec![
+            orders[0].client_order_id(),
+            orders[1].client_order_id(),
+            orders[2].client_order_id(),
+        ],
         risk_engine.clock().borrow().timestamp_ns(),
     );
 
@@ -2597,8 +2640,8 @@ fn test_submit_order_list_when_trading_halted_then_denies_orders(
         trader_id,
         Some(client_id_binance),
         strategy_id_ema_cross,
-        bracket.instrument_id,
         bracket,
+        orders.iter().map(|o| o.init_event().clone()).collect(),
         None,
         None,
         None, // params
@@ -2718,11 +2761,24 @@ fn test_submit_order_list_buys_when_trading_reducing_then_denies_orders(
     //     .price(Price::new(1.2, 1))
     //     .build();
 
+    let orders = [entry, stop_loss];
+
+    risk_engine
+        .cache()
+        .borrow_mut()
+        .add_order(orders[0].clone(), None, Some(client_id_binance), true)
+        .unwrap();
+    risk_engine
+        .cache()
+        .borrow_mut()
+        .add_order(orders[1].clone(), None, Some(client_id_binance), true)
+        .unwrap();
+
     let bracket = OrderList::new(
         OrderListId::new("1"),
         instrument_xbtusd_bitmex.id(),
         StrategyId::new("S-001"),
-        vec![entry, stop_loss],
+        vec![orders[0].client_order_id(), orders[1].client_order_id()],
         risk_engine.clock().borrow().timestamp_ns(),
     );
 
@@ -2730,8 +2786,8 @@ fn test_submit_order_list_buys_when_trading_reducing_then_denies_orders(
         trader_id,
         Some(client_id_binance),
         strategy_id_ema_cross,
-        instrument_xbtusd_bitmex.id(),
         bracket,
+        orders.iter().map(|o| o.init_event().clone()).collect(),
         None,
         None,
         None, // params
@@ -2843,11 +2899,33 @@ fn test_submit_order_list_sells_when_trading_reducing_then_denies_orders(
         .price(Price::new(1.2, 1))
         .build();
 
+    let orders = [entry, stop_loss, take_profit];
+
+    risk_engine
+        .cache()
+        .borrow_mut()
+        .add_order(orders[0].clone(), None, Some(client_id_binance), true)
+        .unwrap();
+    risk_engine
+        .cache()
+        .borrow_mut()
+        .add_order(orders[1].clone(), None, Some(client_id_binance), true)
+        .unwrap();
+    risk_engine
+        .cache()
+        .borrow_mut()
+        .add_order(orders[2].clone(), None, Some(client_id_binance), true)
+        .unwrap();
+
     let bracket = OrderList::new(
         OrderListId::new("1"),
         instrument_xbtusd_bitmex.id(),
         StrategyId::new("S-001"),
-        vec![entry, stop_loss, take_profit],
+        vec![
+            orders[0].client_order_id(),
+            orders[1].client_order_id(),
+            orders[2].client_order_id(),
+        ],
         risk_engine.clock().borrow().timestamp_ns(),
     );
 
@@ -2855,8 +2933,8 @@ fn test_submit_order_list_sells_when_trading_reducing_then_denies_orders(
         trader_id,
         Some(client_id_binance),
         strategy_id_ema_cross,
-        instrument_xbtusd_bitmex.id(),
         bracket,
+        orders.iter().map(|o| o.init_event().clone()).collect(),
         None,
         None,
         None, // params
@@ -2903,16 +2981,16 @@ fn test_submit_bracket_order_when_instrument_not_in_cache_then_denies(
         )))
         .unwrap();
 
-    let mut risk_engine =
-        get_risk_engine(Some(Rc::new(RefCell::new(simple_cache))), None, None, false);
     let entry = OrderTestBuilder::new(OrderType::Market)
         .instrument_id(instrument_audusd.id())
+        .client_order_id(ClientOrderId::from("O-001"))
         .side(OrderSide::Buy)
         .quantity(Quantity::from_str("100").unwrap())
         .build();
 
     let stop_loss = OrderTestBuilder::new(OrderType::StopMarket)
         .instrument_id(instrument_audusd.id())
+        .client_order_id(ClientOrderId::from("O-002"))
         .side(OrderSide::Buy)
         .quantity(Quantity::from_str("100").unwrap())
         .trigger_price(Price::new(0.1, 1))
@@ -2920,16 +2998,37 @@ fn test_submit_bracket_order_when_instrument_not_in_cache_then_denies(
 
     let take_profit = OrderTestBuilder::new(OrderType::Limit)
         .instrument_id(instrument_audusd.id())
+        .client_order_id(ClientOrderId::from("O-003"))
         .side(OrderSide::Buy)
         .quantity(Quantity::from_str("100").unwrap())
         .price(Price::new(0.1001, 4))
         .build();
 
+    let orders = [entry, stop_loss, take_profit];
+
+    // Add orders to cache (but NOT the instrument - testing instrument not found case)
+    simple_cache
+        .add_order(orders[0].clone(), None, Some(client_id_binance), true)
+        .unwrap();
+    simple_cache
+        .add_order(orders[1].clone(), None, Some(client_id_binance), true)
+        .unwrap();
+    simple_cache
+        .add_order(orders[2].clone(), None, Some(client_id_binance), true)
+        .unwrap();
+
+    let mut risk_engine =
+        get_risk_engine(Some(Rc::new(RefCell::new(simple_cache))), None, None, false);
+
     let bracket = OrderList::new(
         OrderListId::new("1"),
         instrument_audusd.id(),
         StrategyId::new("S-001"),
-        vec![entry, stop_loss, take_profit],
+        vec![
+            orders[0].client_order_id(),
+            orders[1].client_order_id(),
+            orders[2].client_order_id(),
+        ],
         risk_engine.clock().borrow().timestamp_ns(),
     );
 
@@ -2937,8 +3036,8 @@ fn test_submit_bracket_order_when_instrument_not_in_cache_then_denies(
         trader_id,
         Some(client_id_binance),
         strategy_id_ema_cross,
-        bracket.instrument_id,
         bracket,
+        orders.iter().map(|o| o.init_event().clone()).collect(),
         None,
         None,
         None, // params

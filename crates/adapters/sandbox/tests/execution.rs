@@ -24,7 +24,7 @@ use nautilus_common::{
     msgbus::{self, MessagingSwitchboard, stubs::get_typed_into_message_saving_handler},
 };
 use nautilus_core::UnixNanos;
-use nautilus_execution::client::base::ExecutionClientCore;
+use nautilus_execution::client::core::ExecutionClientCore;
 use nautilus_model::{
     data::QuoteTick,
     enums::{AccountType, BookType, OmsType},
@@ -122,7 +122,6 @@ fn create_test_context(trader_id: TraderId, account_id: AccountId, venue: Venue)
         config.account_id,
         config.account_type,
         config.base_currency,
-        clock.clone(),
         cache.clone(),
     );
 
@@ -177,7 +176,7 @@ fn test_config_default() {
     assert_eq!(config.book_type, BookType::L1_MBP);
     assert!(!config.frozen_account);
     assert!(config.bar_execution);
-    assert!(!config.trade_execution);
+    assert!(config.trade_execution);
     assert!(config.reject_stop_orders);
     assert!(config.support_gtd_orders);
     assert!(config.support_contingent_orders);

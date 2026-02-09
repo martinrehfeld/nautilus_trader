@@ -356,6 +356,7 @@ impl Logger {
             log_components_only,
             is_colored,
             print_config: _,
+            use_tracing: _,
         } = config;
 
         // Pre-sort module filters by descending path length for O(n) longest-prefix lookup
@@ -734,6 +735,7 @@ mod tests {
                 log_components_only: false,
                 is_colored: true,
                 print_config: false,
+                use_tracing: false,
             }
         );
     }
@@ -751,6 +753,7 @@ mod tests {
                 log_components_only: false,
                 is_colored: true,
                 print_config: true,
+                use_tracing: false,
             }
         );
     }
@@ -772,6 +775,7 @@ mod tests {
                 log_components_only: true,
                 is_colored: true,
                 print_config: false,
+                use_tracing: false,
             }
         );
     }
@@ -1118,7 +1122,7 @@ mod tests {
 
             log::info!(
                 component = "RiskEngine";
-                "This is a test."
+                "This is a test"
             );
 
             let mut log_contents = String::new();
@@ -1152,7 +1156,7 @@ mod tests {
 
             assert_eq!(
                 log_contents,
-                "1970-01-20T02:20:00.000000000Z [INFO] TRADER-001.RiskEngine: This is a test.\n"
+                "1970-01-20T02:20:00.000000000Z [INFO] TRADER-001.RiskEngine: This is a test\n"
             );
         }
 
@@ -1245,7 +1249,7 @@ mod tests {
 
             log::info!(
                 component = "RiskEngine";
-                "This is a test."
+                "This is a test"
             );
 
             drop(log_guard); // Ensure log buffers are flushed
@@ -1302,7 +1306,7 @@ mod tests {
 
             log::info!(
                 component = "RiskEngine";
-                "This is a test."
+                "This is a test"
             );
 
             let mut log_contents = String::new();
@@ -1329,7 +1333,7 @@ mod tests {
 
             assert_eq!(
                 log_contents,
-                "{\"timestamp\":\"1970-01-20T02:20:00.000000000Z\",\"trader_id\":\"TRADER-001\",\"level\":\"INFO\",\"color\":\"NORMAL\",\"component\":\"RiskEngine\",\"message\":\"This is a test.\"}\n"
+                "{\"timestamp\":\"1970-01-20T02:20:00.000000000Z\",\"trader_id\":\"TRADER-001\",\"level\":\"INFO\",\"color\":\"NORMAL\",\"component\":\"RiskEngine\",\"message\":\"This is a test\"}\n"
             );
         }
 

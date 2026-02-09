@@ -132,7 +132,7 @@ impl BinanceFuturesDataClient {
             BinanceProductType::UsdM | BinanceProductType::CoinM => {}
             _ => {
                 anyhow::bail!(
-                    "BinanceFuturesDataClient requires UsdM or CoinM product type, got {product_type:?}"
+                    "BinanceFuturesDataClient requires UsdM or CoinM product type, was {product_type:?}"
                 );
             }
         }
@@ -460,7 +460,7 @@ impl BinanceFuturesDataClient {
                         }
                         log::error!(
                             "OrderBook overlap validation failed for {instrument_id} after \
-                            {MAX_RETRIES} retries. Book may be inconsistent."
+                            {MAX_RETRIES} retries; book may be inconsistent"
                         );
                     }
                 }
@@ -508,7 +508,7 @@ impl BinanceFuturesDataClient {
                         if retry_count < MAX_RETRIES {
                             log::warn!(
                                 "OrderBook continuity break for {instrument_id}: \
-                                expected pu={last_final_update_id}, got pu={}, \
+                                expected pu={last_final_update_id}, was pu={}, \
                                 triggering resync (attempt {}/{})",
                                 update.prev_final_update_id,
                                 retry_count + 1,
@@ -540,8 +540,8 @@ impl BinanceFuturesDataClient {
                         }
                         log::error!(
                             "OrderBook continuity break for {instrument_id} after {MAX_RETRIES} \
-                            retries: expected pu={last_final_update_id}, got pu={}. \
-                            Book may be inconsistent.",
+                            retries: expected pu={last_final_update_id}, was pu={}; \
+                            book may be inconsistent",
                             update.prev_final_update_id
                         );
                     }
@@ -583,7 +583,7 @@ impl BinanceFuturesDataClient {
                             if retry_count < MAX_RETRIES {
                                 log::warn!(
                                     "OrderBook continuity break for {instrument_id}: \
-                                    expected pu={last_final_update_id}, got pu={}, \
+                                    expected pu={last_final_update_id}, was pu={}, \
                                     triggering resync (attempt {}/{})",
                                     update.prev_final_update_id,
                                     retry_count + 1,
@@ -615,7 +615,7 @@ impl BinanceFuturesDataClient {
                             }
                             log::error!(
                                 "OrderBook continuity break for {instrument_id} after \
-                                {MAX_RETRIES} retries. Book may be inconsistent."
+                                {MAX_RETRIES} retries; book may be inconsistent"
                             );
                         }
 

@@ -32,7 +32,7 @@ use nautilus_core::{UUID4, UnixNanos, correctness::check_slice_not_empty};
 use nautilus_cryptography::providers::install_cryptographic_provider;
 use nautilus_model::{
     accounts::AccountAny,
-    data::{Bar, DataType, QuoteTick, TradeTick},
+    data::{Bar, DataType, FundingRateUpdate, QuoteTick, TradeTick},
     events::{OrderEventAny, OrderSnapshot, position::snapshot::PositionSnapshot},
     identifiers::{
         AccountId, ClientId, ClientOrderId, ComponentId, InstrumentId, PositionId, StrategyId,
@@ -136,6 +136,7 @@ pub struct RedisCacheDatabase {
     pub trader_id: TraderId,
     pub trader_key: String,
     pub encoding: SerializationEncoding,
+    pub bulk_read_batch_size: Option<usize>,
     tx: tokio::sync::mpsc::UnboundedSender<DatabaseCommand>,
     handle: tokio::task::JoinHandle<()>,
 }
@@ -175,6 +176,7 @@ impl RedisCacheDatabase {
         let trader_key = get_trader_key(trader_id, instance_id, &config);
         let trader_key_clone = trader_key.clone();
         let encoding = config.encoding;
+        let bulk_read_batch_size = config.bulk_read_batch_size;
 
         let handle = get_runtime().spawn(async move {
             if let Err(e) = process_commands(rx, trader_key_clone, config.clone()).await {
@@ -187,6 +189,7 @@ impl RedisCacheDatabase {
             trader_id,
             trader_key,
             encoding,
+            bulk_read_batch_size,
             tx,
             handle,
         })
@@ -254,7 +257,12 @@ impl RedisCacheDatabase {
     ///
     /// Returns an error if the underlying Redis read operation fails.
     pub async fn read_bulk(&mut self, keys: &[String]) -> anyhow::Result<Vec<Option<Bytes>>> {
-        DatabaseQueries::read_bulk(&self.con, keys).await
+        match self.bulk_read_batch_size {
+            Some(batch_size) => {
+                DatabaseQueries::read_bulk_batched(&self.con, keys, batch_size).await
+            }
+            None => DatabaseQueries::read_bulk(&self.con, keys).await,
+        }
     }
 
     /// Sends an insert command for `key` with optional `payload` to Redis via the background task.
@@ -1185,6 +1193,17 @@ impl CacheDatabaseAdapter for RedisCacheDatabaseAdapter {
     }
 
     fn load_trades(&self, instrument_id: &InstrumentId) -> anyhow::Result<Vec<TradeTick>> {
+        anyhow::bail!("Loading market data for Redis cache adapter not supported")
+    }
+
+    fn add_funding_rate(&self, funding_rate: &FundingRateUpdate) -> anyhow::Result<()> {
+        anyhow::bail!("Loading market data for Redis cache adapter not supported")
+    }
+
+    fn load_funding_rates(
+        &self,
+        instrument_id: &InstrumentId,
+    ) -> anyhow::Result<Vec<FundingRateUpdate>> {
         anyhow::bail!("Loading market data for Redis cache adapter not supported")
     }
 

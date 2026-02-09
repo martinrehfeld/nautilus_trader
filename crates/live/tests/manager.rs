@@ -21,7 +21,16 @@
 use std::{cell::RefCell, rc::Rc};
 
 use ahash::AHashSet;
-use nautilus_common::{cache::Cache, clock::TestClock};
+use async_trait::async_trait;
+use nautilus_common::{
+    cache::Cache,
+    clients::ExecutionClient,
+    clock::TestClock,
+    messages::execution::{
+        BatchCancelOrders, CancelAllOrders, CancelOrder, GenerateOrderStatusReports, ModifyOrder,
+        QueryAccount, QueryOrder, SubmitOrder, SubmitOrderList,
+    },
+};
 use nautilus_core::{UUID4, UnixNanos};
 use nautilus_execution::{
     engine::ExecutionEngine, reconciliation::process_mass_status_for_reconciliation,
@@ -45,7 +54,7 @@ use nautilus_model::{
     orders::{Order, OrderAny, OrderTestBuilder, stubs::TestOrderEventStubs},
     position::Position,
     reports::{ExecutionMassStatus, FillReport, OrderStatusReport, PositionStatusReport},
-    types::{AccountBalance, Currency, Money, Price, Quantity},
+    types::{AccountBalance, Currency, MarginBalance, Money, Price, Quantity},
 };
 use rstest::rstest;
 use rust_decimal_macros::dec;
@@ -806,7 +815,7 @@ async fn test_external_order_filled_with_partial_fills_generates_inferred() {
         assert_ne!(
             filled2.trade_id.as_str(),
             "T-PARTIAL-001",
-            "Expected inferred trade ID (UUID), got known fill report trade ID"
+            "Expected inferred trade ID (UUID), was known fill report trade ID"
         );
         assert_eq!(filled2.trade_id.as_str().len(), 36);
         assert_eq!(filled2.last_qty, Quantity::from("1.000"));
@@ -908,10 +917,10 @@ async fn test_synthetic_orders_bypass_filter_unclaimed_external() {
         let tags = order.tags().expect("Order should have tags");
         assert!(
             tags.contains(&ustr::Ustr::from("RECONCILIATION")),
-            "Synthetic order should have RECONCILIATION tag, got {tags:?}",
+            "Synthetic order should have RECONCILIATION tag, was {tags:?}",
         );
     } else {
-        panic!("Expected Accepted event first, got {:?}", result.events[0]);
+        panic!("Expected Accepted event first, was {:?}", result.events[0]);
     }
 }
 
@@ -3165,7 +3174,7 @@ async fn test_reconcile_hedge_does_not_skip_unrelated_positions() {
     // At least 2 fills: one from fill report, one from position report for P-HEDGE-002
     assert!(
         filled_count >= 2,
-        "Expected at least 2 fill events, got {filled_count}"
+        "Expected at least 2 fill events, was {filled_count}"
     );
 }
 
@@ -3212,7 +3221,7 @@ async fn test_reconcile_hedge_position_matching_quantities() {
     // No events needed since positions match
     assert!(
         result.events.is_empty(),
-        "Expected no events when positions match, got {}",
+        "Expected no events when positions match, was {}",
         result.events.len()
     );
 }
@@ -3508,7 +3517,7 @@ async fn test_reconcile_mass_status_deduplicates_netting_reports_same_instrument
     assert_eq!(
         positions.len(),
         1,
-        "Should have exactly 1 position (duplicates skipped), got {}",
+        "Should have exactly 1 position (duplicates skipped), was {}",
         positions.len()
     );
     assert_eq!(
@@ -3573,7 +3582,7 @@ async fn test_reconcile_mass_status_deduplicates_hedge_reports_same_position_id(
     assert_eq!(
         positions.len(),
         1,
-        "Should have exactly 1 position (duplicates skipped), got {}",
+        "Should have exactly 1 position (duplicates skipped), was {}",
         positions.len()
     );
     assert_eq!(
@@ -3677,7 +3686,7 @@ async fn test_adjust_fills_creates_synthetic_for_partial_window() {
     // Should have at least 2 fills (synthetic opening + original)
     assert!(
         fill_events.len() >= 2,
-        "Expected at least 2 fills (synthetic + original), got {}",
+        "Expected at least 2 fills (synthetic + original), was {}",
         fill_events.len()
     );
 
@@ -3685,7 +3694,7 @@ async fn test_adjust_fills_creates_synthetic_for_partial_window() {
     let total_qty: f64 = fill_events.iter().map(|f| f.last_qty.as_f64()).sum();
     assert!(
         (total_qty - 5.0).abs() < 0.001,
-        "Total filled qty should be ~5.0 to match position, got {total_qty}"
+        "Total filled qty should be ~5.0 to match position, was {total_qty}"
     );
 }
 
@@ -3878,10 +3887,10 @@ async fn test_position_reconciliation_order_has_reconciliation_tag() {
         let tags = order.tags().expect("Order should have tags");
         assert!(
             tags.contains(&ustr::Ustr::from("RECONCILIATION")),
-            "Position reconciliation order should have RECONCILIATION tag, got {tags:?}",
+            "Position reconciliation order should have RECONCILIATION tag, was {tags:?}",
         );
     } else {
-        panic!("Expected Accepted event, got {:?}", result.events[0]);
+        panic!("Expected Accepted event, was {:?}", result.events[0]);
     }
 }
 
@@ -4018,7 +4027,7 @@ async fn test_netting_position_cross_zero_long_to_short() {
     assert_eq!(
         fill_events.len(),
         2,
-        "Cross-zero should generate 2 fills (close + open), got {}",
+        "Cross-zero should generate 2 fills (close + open), was {}",
         fill_events.len()
     );
 
@@ -4093,7 +4102,7 @@ async fn test_netting_position_cross_zero_short_to_long() {
     assert_eq!(
         fill_events.len(),
         2,
-        "Cross-zero should generate 2 fills (close + open), got {}",
+        "Cross-zero should generate 2 fills (close + open), was {}",
         fill_events.len()
     );
 
@@ -4168,7 +4177,7 @@ async fn test_netting_position_flat_report_closes_cached_position() {
     assert_eq!(
         fill_events.len(),
         1,
-        "Flat report should generate 1 closing fill, got {}",
+        "Flat report should generate 1 closing fill, was {}",
         fill_events.len()
     );
 
@@ -4568,7 +4577,7 @@ async fn test_adjust_fills_multi_instrument_preserves_all_fills() {
     let eth_total_qty: f64 = eth_fills.iter().map(|f| f.last_qty.as_f64()).sum();
     assert!(
         (eth_total_qty - 2.0).abs() < 0.001,
-        "ETHUSDT total qty should be 2.0, got {eth_total_qty}"
+        "ETHUSDT total qty should be 2.0, was {eth_total_qty}"
     );
 
     let btc_fills: Vec<_> = fill_events
@@ -4579,7 +4588,7 @@ async fn test_adjust_fills_multi_instrument_preserves_all_fills() {
     let btc_total_qty: f64 = btc_fills.iter().map(|f| f.last_qty.as_f64()).sum();
     assert!(
         (btc_total_qty - 100.0).abs() < 0.001,
-        "XBTUSD total qty should be 100.0, got {btc_total_qty}"
+        "XBTUSD total qty should be 100.0, was {btc_total_qty}"
     );
 }
 
@@ -4931,7 +4940,7 @@ async fn test_cross_zero_with_missing_venue_avg_px_closes_only() {
     assert_eq!(
         fill_events.len(),
         1,
-        "Should generate only close fill when venue avg_px missing, got {}",
+        "Should generate only close fill when venue avg_px missing, was {}",
         fill_events.len()
     );
     assert_eq!(fill_events[0].order_side, OrderSide::Sell);
@@ -4999,7 +5008,7 @@ async fn test_hedge_mode_multiple_positions_same_instrument() {
 
     assert!(
         fill_events.len() >= 2,
-        "Should process both hedge positions, got {} fills",
+        "Should process both hedge positions, was {} fills",
         fill_events.len()
     );
     let has_buy = fill_events.iter().any(|f| f.order_side == OrderSide::Buy);
@@ -5845,4 +5854,276 @@ async fn test_reconciliation_instrument_ids_filters_position_reports() {
         !has_excluded_position,
         "No position should be created for excluded instrument"
     );
+}
+
+struct MockExecutionClient {
+    client_id: ClientId,
+    account_id: AccountId,
+    venue: Venue,
+    order_reports: RefCell<Vec<OrderStatusReport>>,
+}
+
+impl MockExecutionClient {
+    fn new(order_reports: Vec<OrderStatusReport>) -> Self {
+        Self {
+            client_id: test_client_id(),
+            account_id: test_account_id(),
+            venue: test_venue(),
+            order_reports: RefCell::new(order_reports),
+        }
+    }
+}
+
+#[async_trait(?Send)]
+impl ExecutionClient for MockExecutionClient {
+    fn is_connected(&self) -> bool {
+        true
+    }
+
+    fn client_id(&self) -> ClientId {
+        self.client_id
+    }
+
+    fn account_id(&self) -> AccountId {
+        self.account_id
+    }
+
+    fn venue(&self) -> Venue {
+        self.venue
+    }
+
+    fn oms_type(&self) -> OmsType {
+        OmsType::Hedging
+    }
+
+    fn get_account(&self) -> Option<AccountAny> {
+        None
+    }
+
+    fn generate_account_state(
+        &self,
+        _balances: Vec<AccountBalance>,
+        _margins: Vec<MarginBalance>,
+        _reported: bool,
+        _ts_event: UnixNanos,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn start(&mut self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn stop(&mut self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn submit_order(&self, _cmd: &SubmitOrder) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn submit_order_list(&self, _cmd: &SubmitOrderList) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn modify_order(&self, _cmd: &ModifyOrder) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn cancel_order(&self, _cmd: &CancelOrder) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn cancel_all_orders(&self, _cmd: &CancelAllOrders) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn batch_cancel_orders(&self, _cmd: &BatchCancelOrders) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn query_account(&self, _cmd: &QueryAccount) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn query_order(&self, _cmd: &QueryOrder) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn generate_order_status_reports(
+        &self,
+        _cmd: &GenerateOrderStatusReports,
+    ) -> anyhow::Result<Vec<OrderStatusReport>> {
+        Ok(self.order_reports.borrow().clone())
+    }
+}
+
+#[rstest]
+#[tokio::test]
+async fn test_check_open_orders_defers_with_recent_local_activity() {
+    // Test that reconciliation is deferred when there's recent local activity
+    // within the threshold, to avoid race conditions with in-flight fills.
+    let config = ExecutionManagerConfig {
+        open_check_threshold_ns: 200_000_000, // 200ms threshold
+        ..Default::default()
+    };
+    let mut ctx = TestContext::with_config(config);
+    ctx.add_instrument(test_instrument());
+
+    let client_order_id = ClientOrderId::from("O-001");
+    let venue_order_id = VenueOrderId::from("V-001");
+    let instrument_id = test_instrument_id();
+
+    let mut order = OrderTestBuilder::new(OrderType::Limit)
+        .client_order_id(client_order_id)
+        .instrument_id(instrument_id)
+        .quantity(Quantity::from("10.0"))
+        .price(Price::from("100.0"))
+        .build();
+    let submitted = TestOrderEventStubs::submitted(&order, test_account_id());
+    order.apply(submitted).unwrap();
+    let accepted = TestOrderEventStubs::accepted(&order, test_account_id(), venue_order_id);
+    order.apply(accepted).unwrap();
+    ctx.add_order(order.clone());
+
+    ctx.manager.record_local_activity(client_order_id);
+
+    let report = create_order_status_report(
+        Some(client_order_id),
+        venue_order_id,
+        instrument_id,
+        OrderStatus::PartiallyFilled,
+        Quantity::from("10.0"),
+        Quantity::from("5.0"),
+    )
+    .with_avg_px(100.0)
+    .unwrap();
+
+    let mock_client = Rc::new(MockExecutionClient::new(vec![report]));
+    let clients: Vec<Rc<dyn ExecutionClient>> = vec![mock_client];
+
+    let events = ctx.manager.check_open_orders(&clients).await;
+
+    assert!(
+        events.is_empty(),
+        "Reconciliation should be deferred with recent local activity"
+    );
+    let cached_order = ctx.get_order(&client_order_id).unwrap();
+    assert_eq!(cached_order.status(), OrderStatus::Accepted);
+    assert_eq!(cached_order.filled_qty(), Quantity::from("0.0"));
+}
+
+#[rstest]
+#[tokio::test]
+async fn test_check_open_orders_proceeds_after_threshold_exceeded() {
+    // Test that reconciliation proceeds when the local activity is older than
+    // the configured threshold.
+    let config = ExecutionManagerConfig {
+        open_check_threshold_ns: 200_000_000, // 200ms threshold
+        ..Default::default()
+    };
+    let mut ctx = TestContext::with_config(config);
+    ctx.add_instrument(test_instrument());
+
+    let client_order_id = ClientOrderId::from("O-001");
+    let venue_order_id = VenueOrderId::from("V-001");
+    let instrument_id = test_instrument_id();
+
+    let mut order = OrderTestBuilder::new(OrderType::Limit)
+        .client_order_id(client_order_id)
+        .instrument_id(instrument_id)
+        .quantity(Quantity::from("10.0"))
+        .price(Price::from("100.0"))
+        .build();
+    let submitted = TestOrderEventStubs::submitted(&order, test_account_id());
+    order.apply(submitted).unwrap();
+    let accepted = TestOrderEventStubs::accepted(&order, test_account_id(), venue_order_id);
+    order.apply(accepted).unwrap();
+    ctx.add_order(order.clone());
+
+    ctx.manager.record_local_activity(client_order_id);
+    ctx.advance_time(500_000_000);
+
+    let report = create_order_status_report(
+        Some(client_order_id),
+        venue_order_id,
+        instrument_id,
+        OrderStatus::PartiallyFilled,
+        Quantity::from("10.0"),
+        Quantity::from("5.0"),
+    )
+    .with_avg_px(100.0)
+    .unwrap();
+
+    let mock_client = Rc::new(MockExecutionClient::new(vec![report]));
+    let clients: Vec<Rc<dyn ExecutionClient>> = vec![mock_client];
+
+    let events = ctx.manager.check_open_orders(&clients).await;
+
+    assert_eq!(
+        events.len(),
+        1,
+        "Reconciliation should proceed when threshold exceeded"
+    );
+    if let OrderEventAny::Filled(filled) = &events[0] {
+        assert_eq!(filled.last_qty, Quantity::from("5.0"));
+    } else {
+        panic!("Expected OrderFilled event, was {:?}", events[0]);
+    }
+}
+
+#[rstest]
+#[tokio::test]
+async fn test_check_open_orders_proceeds_without_local_activity() {
+    // Test that reconciliation proceeds normally when there's no recorded
+    // local activity for the order.
+    let config = ExecutionManagerConfig {
+        open_check_threshold_ns: 200_000_000, // 200ms threshold
+        ..Default::default()
+    };
+    let mut ctx = TestContext::with_config(config);
+    ctx.add_instrument(test_instrument());
+
+    let client_order_id = ClientOrderId::from("O-001");
+    let venue_order_id = VenueOrderId::from("V-001");
+    let instrument_id = test_instrument_id();
+
+    let mut order = OrderTestBuilder::new(OrderType::Limit)
+        .client_order_id(client_order_id)
+        .instrument_id(instrument_id)
+        .quantity(Quantity::from("10.0"))
+        .price(Price::from("100.0"))
+        .build();
+    let submitted = TestOrderEventStubs::submitted(&order, test_account_id());
+    order.apply(submitted).unwrap();
+    let accepted = TestOrderEventStubs::accepted(&order, test_account_id(), venue_order_id);
+    order.apply(accepted).unwrap();
+    ctx.add_order(order.clone());
+
+    let report = create_order_status_report(
+        Some(client_order_id),
+        venue_order_id,
+        instrument_id,
+        OrderStatus::PartiallyFilled,
+        Quantity::from("10.0"),
+        Quantity::from("5.0"),
+    )
+    .with_avg_px(100.0)
+    .unwrap();
+
+    let mock_client = Rc::new(MockExecutionClient::new(vec![report]));
+    let clients: Vec<Rc<dyn ExecutionClient>> = vec![mock_client];
+
+    let events = ctx.manager.check_open_orders(&clients).await;
+
+    assert_eq!(
+        events.len(),
+        1,
+        "Reconciliation should proceed without local activity"
+    );
+    if let OrderEventAny::Filled(filled) = &events[0] {
+        assert_eq!(filled.last_qty, Quantity::from("5.0"));
+    } else {
+        panic!("Expected OrderFilled event, was {:?}", events[0]);
+    }
 }

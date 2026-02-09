@@ -165,10 +165,10 @@ repos:
         files: '\.rs$'
         pass_filenames: false
 
-      - id: check-logging-macro-usage
-        name: check logging macro usage
-        description: Enforces logging macro conventions
-        entry: .pre-commit-hooks/check_logging_macro_usage.sh
+      - id: check-logging-conventions
+        name: check logging conventions
+        description: Enforces logging conventions
+        entry: .pre-commit-hooks/check_logging_conventions.sh
         language: script
         files: '\.rs$'
         pass_filenames: false
@@ -273,7 +273,7 @@ repos:
         types: [python]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.13
+    rev: v0.15.0
     hooks:
       - id: ruff
         name: ruff
@@ -326,7 +326,7 @@ repos:
         ]
 
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.9.26 # Must match uv-version file
+    rev: 0.10.0 # Must match uv-version file
     hooks:
       - id: uv-lock
         files: ^python/uv\.lock$

@@ -46,7 +46,13 @@ use super::consts::{
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 #[cfg_attr(
     feature = "python",
-    pyo3::pyclass(eq, eq_int, module = "nautilus_trader.core.nautilus_pyo3.architect")
+    pyo3::pyclass(
+        eq,
+        eq_int,
+        frozen,
+        hash,
+        module = "nautilus_trader.core.nautilus_pyo3.architect"
+    )
 )]
 pub enum AxEnvironment {
     /// Sandbox/test environment.
@@ -97,7 +103,7 @@ impl AxEnvironment {
 /// Instrument state as returned by the AX Exchange API.
 ///
 /// # References
-/// - <https://docs.sandbox.x.architect.co/api-reference/symbols-instruments/get-instruments>
+/// - <https://docs.architect.exchange/api-reference/symbols-instruments/get-instruments>
 #[derive(
     Clone,
     Copy,
@@ -134,7 +140,7 @@ pub enum AxInstrumentState {
 /// Order side for trading operations.
 ///
 /// # References
-/// - <https://docs.sandbox.x.architect.co/api-reference/order-management/place-order>
+/// - <https://docs.architect.exchange/api-reference/order-management/place-order>
 #[derive(
     Clone,
     Copy,
@@ -155,11 +161,11 @@ pub enum AxInstrumentState {
 )]
 pub enum AxOrderSide {
     /// Buy order.
-    #[serde(rename = "B")]
+    #[serde(rename = "B", alias = "Buy")]
     #[strum(serialize = "B")]
     Buy,
     /// Sell order.
-    #[serde(rename = "S")]
+    #[serde(rename = "S", alias = "Sell")]
     #[strum(serialize = "S")]
     Sell,
 }
@@ -206,7 +212,7 @@ impl TryFrom<OrderSide> for AxOrderSide {
 /// Order status as returned by the AX Exchange API.
 ///
 /// # References
-/// - <https://docs.sandbox.x.architect.co/api-reference/order-management/get-open-orders>
+/// - <https://docs.architect.exchange/api-reference/order-management/get-open-orders>
 #[derive(
     Clone,
     Copy,
@@ -282,7 +288,7 @@ impl From<AxOrderStatus> for OrderStatus {
 /// Time in force for order validity.
 ///
 /// # References
-/// - <https://docs.sandbox.x.architect.co/api-reference/order-management/place-order>
+/// - <https://docs.architect.exchange/api-reference/order-management/place-order>
 #[derive(
     Clone,
     Copy,
@@ -314,6 +320,10 @@ pub enum AxTimeInForce {
     Ioc,
     /// Fill-Or-Kill: execute entire order immediately or cancel.
     Fok,
+    /// At-the-Open: execute at market opening or expire.
+    Ato,
+    /// At-the-Close: execute at market close or expire.
+    Atc,
 }
 
 impl From<AxTimeInForce> for TimeInForce {
@@ -324,6 +334,8 @@ impl From<AxTimeInForce> for TimeInForce {
             AxTimeInForce::Day => Self::Day,
             AxTimeInForce::Ioc => Self::Ioc,
             AxTimeInForce::Fok => Self::Fok,
+            AxTimeInForce::Ato => Self::AtTheOpen,
+            AxTimeInForce::Atc => Self::AtTheClose,
         }
     }
 }
@@ -338,7 +350,8 @@ impl TryFrom<TimeInForce> for AxTimeInForce {
             TimeInForce::Day => Ok(Self::Day),
             TimeInForce::Ioc => Ok(Self::Ioc),
             TimeInForce::Fok => Ok(Self::Fok),
-            _ => Err("Unsupported time-in-force for AX"),
+            TimeInForce::AtTheOpen => Ok(Self::Ato),
+            TimeInForce::AtTheClose => Ok(Self::Atc),
         }
     }
 }
@@ -351,7 +364,6 @@ impl TryFrom<TimeInForce> for AxTimeInForce {
     Clone,
     Copy,
     Debug,
-    Default,
     Display,
     Eq,
     PartialEq,
@@ -369,8 +381,9 @@ impl TryFrom<TimeInForce> for AxTimeInForce {
     pyo3::pyclass(eq, eq_int, module = "nautilus_trader.core.nautilus_pyo3.architect")
 )]
 pub enum AxOrderType {
+    /// Market order; execute immediately at best available price.
+    Market,
     /// Limit order; execute no worse than the limit price specified.
-    #[default]
     Limit,
     /// Stop-limit order; if the trigger price is breached, place a limit order.
     StopLossLimit,
@@ -382,6 +395,7 @@ pub enum AxOrderType {
 impl From<AxOrderType> for OrderType {
     fn from(order_type: AxOrderType) -> Self {
         match order_type {
+            AxOrderType::Market => Self::Market,
             AxOrderType::Limit => Self::Limit,
             AxOrderType::StopLossLimit => Self::StopLimit,
             AxOrderType::TakeProfitLimit => Self::LimitIfTouched,
@@ -394,6 +408,7 @@ impl TryFrom<OrderType> for AxOrderType {
 
     fn try_from(order_type: OrderType) -> Result<Self, Self::Error> {
         match order_type {
+            OrderType::Market => Ok(Self::Market),
             OrderType::Limit => Ok(Self::Limit),
             OrderType::StopLimit => Ok(Self::StopLossLimit),
             OrderType::LimitIfTouched => Ok(Self::TakeProfitLimit),
@@ -405,7 +420,7 @@ impl TryFrom<OrderType> for AxOrderType {
 /// Market data subscription level.
 ///
 /// # References
-/// - <https://docs.sandbox.x.architect.co/api-reference/marketdata/md-ws>
+/// - <https://docs.architect.exchange/api-reference/marketdata/md-ws>
 #[derive(
     Clone,
     Copy,
@@ -423,7 +438,13 @@ impl TryFrom<OrderType> for AxOrderType {
 #[strum(ascii_case_insensitive)]
 #[cfg_attr(
     feature = "python",
-    pyo3::pyclass(eq, eq_int, module = "nautilus_trader.core.nautilus_pyo3.architect")
+    pyo3::pyclass(
+        eq,
+        eq_int,
+        frozen,
+        hash,
+        module = "nautilus_trader.core.nautilus_pyo3.architect"
+    )
 )]
 pub enum AxMarketDataLevel {
     /// Level 1: best bid/ask only.
@@ -443,7 +464,7 @@ pub enum AxMarketDataLevel {
 /// Candle/bar width for market data subscriptions.
 ///
 /// # References
-/// - <https://docs.sandbox.x.architect.co/api-reference/marketdata/md-ws>
+/// - <https://docs.architect.exchange/api-reference/marketdata/md-ws>
 #[derive(
     Clone,
     Copy,
@@ -496,7 +517,7 @@ pub enum AxCandleWidth {
 /// WebSocket market data message type (server to client).
 ///
 /// # References
-/// - <https://docs.sandbox.x.architect.co/api-reference/marketdata/md-ws>
+/// - <https://docs.architect.exchange/api-reference/marketdata/md-ws>
 #[derive(
     Clone,
     Copy,
@@ -549,7 +570,7 @@ pub enum AxMdWsMessageType {
 /// WebSocket order message type (server to client).
 ///
 /// # References
-/// - <https://docs.sandbox.x.architect.co/api-reference/order-management/orders-ws>
+/// - <https://docs.architect.exchange/api-reference/order-management/orders-ws>
 #[derive(
     Clone,
     Copy,
@@ -614,7 +635,7 @@ pub enum AxOrderWsMessageType {
 /// Reason for order cancellation.
 ///
 /// # References
-/// - <https://docs.sandbox.x.architect.co/api-reference/order-management/orders-ws>
+/// - <https://docs.architect.exchange/api-reference/order-management/orders-ws>
 #[derive(
     Clone,
     Copy,
@@ -638,12 +659,15 @@ pub enum AxOrderWsMessageType {
 pub enum AxCancelReason {
     /// User requested cancellation.
     UserRequested,
+    /// Unrecognized or empty reason from the server.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Reason for cancel rejection.
 ///
 /// # References
-/// - <https://docs.sandbox.x.architect.co/api-reference/order-management/orders-ws>
+/// - <https://docs.architect.exchange/api-reference/order-management/orders-ws>
 #[derive(
     Clone,
     Copy,
@@ -667,6 +691,9 @@ pub enum AxCancelReason {
 pub enum AxCancelRejectionReason {
     /// Order not found or already canceled.
     OrderNotFound,
+    /// Unrecognized reason from the server.
+    #[serde(other)]
+    Unknown,
 }
 
 #[cfg(test)]
@@ -726,6 +753,8 @@ mod tests {
     #[case(AxTimeInForce::Day, "\"DAY\"")]
     #[case(AxTimeInForce::Gtd, "\"GTD\"")]
     #[case(AxTimeInForce::Fok, "\"FOK\"")]
+    #[case(AxTimeInForce::Ato, "\"ATO\"")]
+    #[case(AxTimeInForce::Atc, "\"ATC\"")]
     fn test_time_in_force_serialization(#[case] tif: AxTimeInForce, #[case] expected: &str) {
         let json = serde_json::to_string(&tif).unwrap();
         assert_eq!(json, expected);
@@ -735,6 +764,7 @@ mod tests {
     }
 
     #[rstest]
+    #[case(AxOrderType::Market, "\"MARKET\"")]
     #[case(AxOrderType::Limit, "\"LIMIT\"")]
     #[case(AxOrderType::StopLossLimit, "\"STOP_LOSS_LIMIT\"")]
     #[case(AxOrderType::TakeProfitLimit, "\"TAKE_PROFIT_LIMIT\"")]
