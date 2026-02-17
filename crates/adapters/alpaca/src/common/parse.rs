@@ -26,7 +26,7 @@ use nautilus_model::{
     identifiers::{InstrumentId, TradeId},
     types::{Price, Quantity},
 };
-use rust_decimal::{prelude::ToPrimitive, Decimal};
+use rust_decimal::Decimal;
 
 use super::models::{AlpacaWsBar, AlpacaWsQuote, AlpacaWsTrade};
 use crate::error::{AlpacaError, Result};
@@ -76,18 +76,9 @@ pub fn current_timestamp_ns() -> UnixNanos {
 ///
 /// Returns an error if the price cannot be parsed.
 pub fn parse_price(value: Decimal, precision: u8) -> Result<Price> {
-    // Price::from_raw expects raw value scaled to FIXED_PRECISION (9 or 16)
-    // Not scaled to the instrument precision
-    const FIXED_PRECISION: u8 = 16; // high-precision feature enabled
-    let multiplier = Decimal::from(10_i64.pow(u32::from(FIXED_PRECISION)));
-    let scaled = value * multiplier;
-    let raw_i128 = scaled.to_i128().ok_or_else(|| {
-        AlpacaError::ParseError(format!("Price value {} out of range for FIXED_PRECISION {}", value, FIXED_PRECISION))
-    })?;
-    let raw = raw_i128.try_into().map_err(|_| {
-        AlpacaError::ParseError(format!("Price value {} exceeds i64 range", raw_i128))
-    })?;
-    Ok(Price::from_raw(raw, precision))
+    Price::from_decimal_dp(value, precision).map_err(|e| {
+        AlpacaError::ParseError(format!("Failed to parse price '{}': {}", value.to_string(), e))
+    })
 }
 
 /// Parses a decimal quantity with given precision.
@@ -96,18 +87,9 @@ pub fn parse_price(value: Decimal, precision: u8) -> Result<Price> {
 ///
 /// Returns an error if the quantity cannot be parsed.
 pub fn parse_quantity(value: Decimal, precision: u8) -> Result<Quantity> {
-    // Quantity::from_raw expects raw value scaled to FIXED_PRECISION (9 or 16)
-    // Not scaled to the instrument precision
-    const FIXED_PRECISION: u8 = 16; // high-precision feature enabled
-    let multiplier = Decimal::from(10_i64.pow(u32::from(FIXED_PRECISION)));
-    let scaled = value * multiplier;
-    let raw_u128 = scaled.to_u128().ok_or_else(|| {
-        AlpacaError::ParseError(format!("Quantity value {} out of range for FIXED_PRECISION {}", value, FIXED_PRECISION))
-    })?;
-    let raw = raw_u128.try_into().map_err(|_| {
-        AlpacaError::ParseError(format!("Quantity value {} exceeds u64 range", raw_u128))
-    })?;
-    Ok(Quantity::from_raw(raw, precision))
+    Quantity::from_decimal_dp(value, precision).map_err(|e| {
+        AlpacaError::ParseError(format!("Failed to parse quantity '{}': {}", value.to_string(), e))
+    })
 }
 
 // 
@@ -195,9 +177,6 @@ pub fn parse_quote_tick(
 ) -> Result<QuoteTick> {
     // Parse timestamp
     let ts_event = parse_timestamp_ns(&quote.timestamp)?;
-
-    eprintln!("🔍 parse_quote_tick INPUT: bid_price={}, ask_price={}, bid_size={}, ask_size={}, price_prec={}, size_prec={}",
-              quote.bid_price, quote.ask_price, quote.bid_size, quote.ask_size, price_precision, size_precision);
 
     // Parse bid price and size
     let bid_price = parse_price(quote.bid_price, price_precision)?;
@@ -350,12 +329,17 @@ pub fn parse_timeframe(timeframe: &str) -> Result<(usize, BarAggregation)> {
 mod tests {
     use super::*;
     use rstest::rstest;
+    use rust_decimal_macros::dec;
 
+    use nautilus_core::datetime::NANOSECONDS_IN_MILLISECOND;
     use nautilus_model::identifiers::{Symbol, Venue};
+
+    const TEST_TIMESTAMP_RFC3339: &str = "2023-08-25T14:30:00Z";
+    const TEST_TIMESTAMP_NANOS: UnixNanos = UnixNanos::new(1692973800000 * NANOSECONDS_IN_MILLISECOND);
 
     #[rstest]
     fn test_parse_timestamp_ns() {
-        let ts_str = "2023-08-25T14:30:00Z";
+        let ts_str = TEST_TIMESTAMP_RFC3339;
         let result = parse_timestamp_ns(ts_str);
         assert!(result.is_ok());
     }
@@ -421,9 +405,9 @@ mod tests {
             symbol: "AAPL".to_string(),
             trade_id: Some(123456),
             exchange: Some("V".to_string()),
-            price: Decimal::new(15025, 2), // 150.25
-            size: 100,
-            timestamp: "2023-08-25T14:30:00Z".to_string(),
+            price: dec!(150.25),
+            size: dec!(100),
+            timestamp: TEST_TIMESTAMP_RFC3339.to_string(),
             conditions: Some(vec!["@".to_string()]),
             tape: Some("C".to_string()),
         };
@@ -439,7 +423,12 @@ mod tests {
 
         let tick = result.unwrap();
         assert_eq!(tick.instrument_id, instrument_id);
-        assert_eq!(tick.size.raw, 100);
+        assert_eq!(tick.price.to_string(), "150.25");
+        assert_eq!(tick.size.to_string(), "100");
+        assert_eq!(tick.aggressor_side, AggressorSide::NoAggressor);
+        assert_eq!(tick.trade_id.to_string(), "123456");
+        assert_eq!(tick.ts_init, ts_init);
+        assert_eq!(tick.ts_event, TEST_TIMESTAMP_NANOS);
     }
 
     #[rstest]
@@ -448,12 +437,12 @@ mod tests {
             msg_type: "q".to_string(),
             symbol: "MSFT".to_string(),
             ask_exchange: Some("Q".to_string()),
-            ask_price: Decimal::new(33050, 2), // 330.50
-            ask_size: 200,
+            ask_price: dec!(330.50),
+            ask_size: dec!(200),
             bid_exchange: Some("Q".to_string()),
-            bid_price: Decimal::new(33045, 2), // 330.45
-            bid_size: 150,
-            timestamp: "2023-08-25T14:30:00Z".to_string(),
+            bid_price: dec!(330.45),
+            bid_size: dec!(150),
+            timestamp: TEST_TIMESTAMP_RFC3339.to_string(),
             conditions: Some(vec!["R".to_string()]),
             tape: Some("C".to_string()),
         };
@@ -469,8 +458,12 @@ mod tests {
 
         let tick = result.unwrap();
         assert_eq!(tick.instrument_id, instrument_id);
-        assert_eq!(tick.ask_size.raw, 200);
-        assert_eq!(tick.bid_size.raw, 150);
+        assert_eq!(tick.bid_price.to_string(), "330.45");
+        assert_eq!(tick.ask_price.to_string(), "330.50");
+        assert_eq!(tick.bid_size.to_string(), "150");
+        assert_eq!(tick.ask_size.to_string(), "200");
+        assert_eq!(tick.ts_init, ts_init);
+        assert_eq!(tick.ts_event, TEST_TIMESTAMP_NANOS);
     }
 
     #[rstest]
@@ -478,14 +471,14 @@ mod tests {
         let bar_data = AlpacaWsBar {
             msg_type: "b".to_string(),
             symbol: "SPY".to_string(),
-            open: Decimal::new(44010, 2), // 440.10
-            high: Decimal::new(44050, 2), // 440.50
-            low: Decimal::new(44000, 2),  // 440.00
-            close: Decimal::new(44025, 2), // 440.25
-            volume: 1000000,
-            timestamp: "2023-08-25T14:30:00Z".to_string(),
+            open: dec!(440.10),
+            high: dec!(440.50),
+            low: dec!(440.00),
+            close: dec!(440.25),
+            volume: dec!(1000000),
+            timestamp: TEST_TIMESTAMP_RFC3339.to_string(),
             trade_count: Some(5000),
-            vwap: Some(Decimal::new(44022, 2)),
+            vwap: Some(dec!(440.22)),
         };
 
         let instrument_id = InstrumentId::new(
@@ -495,11 +488,16 @@ mod tests {
         let bar_type = create_bar_type(instrument_id, "1Min").unwrap();
         let ts_init = current_timestamp_ns();
 
-        let result = parse_bar(&bar_data, bar_type, 2, 0, ts_init);
-        assert!(result.is_ok());
+        let bar = parse_bar(&bar_data, bar_type, 2, 0, ts_init)
+            .expect("parse_bar should not return error");
 
-        let bar = result.unwrap();
         assert_eq!(bar.bar_type, bar_type);
-        assert_eq!(bar.volume.raw, 1000000);
+        assert_eq!(bar.open.to_string(), "440.10");
+        assert_eq!(bar.high.to_string(), "440.50");
+        assert_eq!(bar.low.to_string(), "440.00");
+        assert_eq!(bar.close.to_string(), "440.25");
+        assert_eq!(bar.volume.to_string(), "1000000");
+        assert_eq!(bar.ts_init, ts_init);
+        assert_eq!(bar.ts_event, TEST_TIMESTAMP_NANOS);
     }
 }

@@ -201,7 +201,7 @@ pub struct AlpacaOptionInstrument {
 mod tests {
     use super::*;
     use rstest::rstest;
-
+    use rust_decimal_macros::dec;
 
     #[rstest]
     fn test_deserialize_trade() {
@@ -220,7 +220,7 @@ mod tests {
         let trade: AlpacaWsTrade = serde_json::from_str(json).unwrap();
         assert_eq!(trade.symbol, "AAPL");
         assert_eq!(trade.price.to_string(), "150.25");
-        assert_eq!(trade.size, 100);
+        assert_eq!(trade.size, dec!(100));
         assert_eq!(trade.msg_type, "t");
     }
 
@@ -244,8 +244,8 @@ mod tests {
         assert_eq!(quote.symbol, "MSFT");
         assert_eq!(quote.ask_price.to_string(), "330.5");
         assert_eq!(quote.bid_price.to_string(), "330.45");
-        assert_eq!(quote.ask_size, 200);
-        assert_eq!(quote.bid_size, 150);
+        assert_eq!(quote.ask_size, dec!(200));
+        assert_eq!(quote.bid_size, dec!(150));
     }
 
     #[rstest]
@@ -269,7 +269,7 @@ mod tests {
         assert_eq!(bar.high.to_string(), "440.5");
         assert_eq!(bar.low.to_string(), "440");
         assert_eq!(bar.close.to_string(), "440.25");
-        assert_eq!(bar.volume, 1000000);
+        assert_eq!(bar.volume, dec!(1000000));
         assert_eq!(bar.trade_count, Some(5000));
     }
 

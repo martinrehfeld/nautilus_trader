@@ -273,7 +273,7 @@ mod tests {
         if let AlpacaWsMessage::Trade(trade) = msg {
             assert_eq!(trade.symbol, "AAPL");
             assert_eq!(trade.p, 150.25);
-            assert_eq!(trade.s, 100);
+            assert_eq!(trade.s, 100.0);
         } else {
             panic!("Expected Trade message");
         }
