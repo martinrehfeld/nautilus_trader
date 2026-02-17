@@ -60,14 +60,16 @@ pub fn get_ws_trading_url(environment: AlpacaEnvironment) -> &'static str {
 
 /// Returns the WebSocket URL for market data streaming.
 #[must_use]
-pub fn get_ws_data_url(asset_class: AlpacaAssetClass, data_feed: AlpacaDataFeed) -> &'static str {
+pub fn get_ws_url(environment: AlpacaEnvironment, asset_class: AlpacaAssetClass, data_feed: AlpacaDataFeed) -> &'static str {
     match asset_class {
         AlpacaAssetClass::UsEquity => match data_feed {
             AlpacaDataFeed::Iex => WS_STOCKS_IEX,
             AlpacaDataFeed::Sip => WS_STOCKS_SIP,
+            AlpacaDataFeed::Trading => panic!("Data feed 'Trading' is not valid for asset class 'UsEquity'"),
         },
         AlpacaAssetClass::Crypto => WS_CRYPTO,
         AlpacaAssetClass::Option => WS_OPTIONS,
+        AlpacaAssetClass::NotApplicable => get_ws_trading_url(environment),
     }
 }
 
@@ -96,7 +98,7 @@ mod tests {
     #[rstest]
     fn test_ws_trading_url_live() {
         assert_eq!(
-            get_ws_trading_url(AlpacaEnvironment::Live),
+            get_ws_url(AlpacaEnvironment::Live, AlpacaAssetClass::NotApplicable, AlpacaDataFeed::Trading),
             "wss://api.alpaca.markets/stream"
         );
     }
@@ -104,7 +106,7 @@ mod tests {
     #[rstest]
     fn test_ws_trading_url_paper() {
         assert_eq!(
-            get_ws_trading_url(AlpacaEnvironment::Paper),
+            get_ws_url(AlpacaEnvironment::Paper, AlpacaAssetClass::NotApplicable, AlpacaDataFeed::Trading),
             "wss://paper-api.alpaca.markets/stream"
         );
     }
@@ -112,7 +114,7 @@ mod tests {
     #[rstest]
     fn test_ws_data_url_stocks_iex() {
         assert_eq!(
-            get_ws_data_url(AlpacaAssetClass::UsEquity, AlpacaDataFeed::Iex),
+            get_ws_url(AlpacaEnvironment::Live, AlpacaAssetClass::UsEquity, AlpacaDataFeed::Iex),
             "wss://stream.data.alpaca.markets/v2/iex"
         );
     }
@@ -120,7 +122,7 @@ mod tests {
     #[rstest]
     fn test_ws_data_url_stocks_sip() {
         assert_eq!(
-            get_ws_data_url(AlpacaAssetClass::UsEquity, AlpacaDataFeed::Sip),
+            get_ws_url(AlpacaEnvironment::Live, AlpacaAssetClass::UsEquity, AlpacaDataFeed::Sip),
             "wss://stream.data.alpaca.markets/v2/sip"
         );
     }
@@ -128,7 +130,7 @@ mod tests {
     #[rstest]
     fn test_ws_data_url_crypto() {
         assert_eq!(
-            get_ws_data_url(AlpacaAssetClass::Crypto, AlpacaDataFeed::Iex),
+            get_ws_url(AlpacaEnvironment::Live, AlpacaAssetClass::Crypto, AlpacaDataFeed::Iex),
             "wss://stream.data.alpaca.markets/v1beta3/crypto/us"
         );
     }
@@ -136,7 +138,7 @@ mod tests {
     #[rstest]
     fn test_ws_data_url_options() {
         assert_eq!(
-            get_ws_data_url(AlpacaAssetClass::Option, AlpacaDataFeed::Iex),
+            get_ws_url(AlpacaEnvironment::Live, AlpacaAssetClass::Option, AlpacaDataFeed::Iex),
             "wss://stream.data.alpaca.markets/v1beta1/options"
         );
     }

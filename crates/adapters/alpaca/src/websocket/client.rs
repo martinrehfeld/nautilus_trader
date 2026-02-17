@@ -28,9 +28,7 @@ use pyo3::prelude::*;
 
 use super::messages::{AlpacaWsAuthMessage, AlpacaWsMessage, AlpacaWsSubscribeMessage};
 use crate::common::{
-    credential::AlpacaCredential,
-    enums::{AlpacaAssetClass, AlpacaDataFeed},
-    urls::get_ws_data_url,
+    AlpacaEnvironment, credential::AlpacaCredential, enums::{AlpacaAssetClass, AlpacaDataFeed}, urls::get_ws_url
 };
 
 /// Alpaca WebSocket client for market data streaming.
@@ -59,6 +57,7 @@ impl AlpacaWebSocketClient {
     /// * `url_override` - Optional URL override for testing.
     #[must_use]
     pub fn new(
+        environment: AlpacaEnvironment,
         api_key: String,
         api_secret: String,
         asset_class: AlpacaAssetClass,
@@ -67,7 +66,7 @@ impl AlpacaWebSocketClient {
     ) -> Self {
         let credential = AlpacaCredential::new(api_key, api_secret);
         let url =
-            url_override.unwrap_or_else(|| get_ws_data_url(asset_class, data_feed).to_string());
+            url_override.unwrap_or_else(|| get_ws_url(environment, asset_class, data_feed).to_string());
 
         Self {
             url,
@@ -209,6 +208,7 @@ mod tests {
     #[rstest]
     fn test_client_creation() {
         let client = AlpacaWebSocketClient::new(
+            AlpacaEnvironment::Live,
             "test_key".to_string(),
             "test_secret".to_string(),
             AlpacaAssetClass::UsEquity,
@@ -224,6 +224,7 @@ mod tests {
     #[rstest]
     fn test_auth_message() {
         let client = AlpacaWebSocketClient::new(
+            AlpacaEnvironment::Live,
             "my_key".to_string(),
             "my_secret".to_string(),
             AlpacaAssetClass::UsEquity,
@@ -250,6 +251,7 @@ mod tests {
     #[rstest]
     fn test_crypto_url() {
         let client = AlpacaWebSocketClient::new(
+            AlpacaEnvironment::Live,
             "key".to_string(),
             "secret".to_string(),
             AlpacaAssetClass::Crypto,
@@ -266,6 +268,7 @@ mod tests {
     #[rstest]
     fn test_options_url() {
         let client = AlpacaWebSocketClient::new(
+            AlpacaEnvironment::Live,
             "key".to_string(),
             "secret".to_string(),
             AlpacaAssetClass::Option,

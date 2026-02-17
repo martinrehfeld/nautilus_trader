@@ -165,6 +165,7 @@ impl AlpacaInstrumentProvider {
             AlpacaAssetClass::UsEquity => self.load_equities().await,
             AlpacaAssetClass::Crypto => self.load_crypto().await,
             AlpacaAssetClass::Option => self.load_options().await,
+            AlpacaAssetClass::NotApplicable => panic!("Asset class 'NotApplicable' is invalid for AlpacaDataClient"),
         }
     }
 

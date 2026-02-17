@@ -30,4 +30,4 @@ pub use enums::{
 };
 pub use models::*;
 pub use parse::*;
-pub use urls::{get_http_base_url, get_ws_data_url, get_ws_trading_url};
+pub use urls::{get_http_base_url, get_ws_url};

@@ -22,7 +22,11 @@ Provides order submission and position management for:
 """
 
 import asyncio
+import json
+import msgspec
 
+from nautilus_trader.adapters.alpaca import AlpacaAssetClass
+from nautilus_trader.adapters.alpaca import AlpacaDataFeed
 from nautilus_trader.adapters.alpaca.providers import AlpacaInstrumentProvider
 from nautilus_trader.cache.cache import Cache
 from nautilus_trader.common.component import LiveClock
@@ -132,6 +136,13 @@ class AlpacaExecutionClient(LiveExecutionClient):
         self._client_order_id_to_venue_order_id: dict[ClientOrderId, VenueOrderId] = {}
         self._venue_order_id_to_client_order_id: dict[VenueOrderId, ClientOrderId] = {}
 
+        # WebSocket client (will be initialized on connect)
+        self._ws_client: nautilus_pyo3.WebSocketClient | None = None
+        self._decoder = msgspec.json.Decoder()
+
+        # Track subscriptions
+        self._stream_subscriptions: set[str] = set()
+
         # Log configuration
         self._log.info(f"paper_trading={config.paper_trading}", LogColor.BLUE)
         self._log.info(f"http_timeout_secs={config.http_timeout_secs}", LogColor.BLUE)
@@ -156,8 +167,42 @@ class AlpacaExecutionClient(LiveExecutionClient):
         except Exception as e:
             self._log.error(f"Error connecting to Alpaca: {e}")
             raise
+        
+        # Create Alpaca WebSocket client for trading updates
+        alpaca_ws_client = nautilus_pyo3.AlpacaWebSocketClient(
+            paper_trading=self._config.paper_trading,
+            api_key=self._config.api_key or "",
+            api_secret=self._config.api_secret or "",
+            asset_class=AlpacaAssetClass.NotApplicable,
+            data_feed=AlpacaDataFeed.Trading,
+            url_override=self._config.base_url_ws,
+        )
 
-        self._log.info("Connected to Alpaca execution services", LogColor.GREEN)
+        # Create WebSocket config
+        ws_config = nautilus_pyo3.WebSocketConfig(
+            url=alpaca_ws_client.url,
+            headers=[],
+            heartbeat=20,
+        )
+
+        # Connect WebSocket client
+        self._ws_client = await nautilus_pyo3.WebSocketClient.connect(
+            loop_=self._loop,
+            config=ws_config,
+            handler=self._handle_ws_message,
+            post_reconnection=self._post_reconnection,
+        )
+
+        # Perform initial authentication
+        await self._post_connection()       
+
+        self._log.info(f"Connected to Alpaca execution services updates stream {alpaca_ws_client.url}", LogColor.GREEN)
+        
+        # Subscribe to trade_updates stream
+        # TODO: Only send this when authentication succeeded.
+        self._log.info(f"Subscribing to trade_updates stream...")
+        await self._resubscribe_streams(["trade_updates"])
+        self._stream_subscriptions.add("trade_updates")
 
     async def _disconnect(self) -> None:
         """
@@ -169,7 +214,99 @@ class AlpacaExecutionClient(LiveExecutionClient):
         self._client_order_id_to_venue_order_id.clear()
         self._venue_order_id_to_client_order_id.clear()
 
+        # Close WebSocket connection
+        if self._ws_client:
+            await self._ws_client.disconnect()
+            self._ws_client = None
+
         self._log.info("Disconnected from Alpaca execution services", LogColor.GREEN)
+
+    async def _post_connection(self) -> None:
+        """
+        Actions to perform post connection.
+
+        Sends authentication message to Alpaca WebSocket.
+        """
+        if not self._ws_client:
+            return
+
+        # Create and send authentication message
+        alpaca_ws_client = nautilus_pyo3.AlpacaWebSocketClient(
+            paper_trading=self._config.paper_trading,
+            api_key=self._config.api_key or "",
+            api_secret=self._config.api_secret or "",
+            asset_class=AlpacaAssetClass.NotApplicable,
+            data_feed=AlpacaDataFeed.Trading,
+            url_override=self._config.base_url_ws,
+        )
+
+        auth_msg = alpaca_ws_client.auth_message()
+        self._log.debug(f"Sending auth message: {auth_msg}")
+        await self._ws_client.send_text(auth_msg.encode("utf-8"))
+
+    async def _post_reconnection(self) -> None:
+        """
+        Actions to perform post reconnection.
+
+        Re-authenticates and re-subscribes to all active streams.
+        """
+        await self._post_connection()
+        
+        # Resubscribe to all active subscriptions
+        if self._stream_subscriptions:
+            await self._resubscribe_streams(list(self._stream_subscriptions))
+
+    async def _resubscribe_streams(self, streams: list[str]) -> None:
+        """Resubscribe to update streams."""
+        if not self._ws_client:
+            return
+        
+        self._log.info(f"Subscribing to update streams {streams}...")
+        await self._ws_client.send(
+            json.dumps({"action": "listen", "data": {"streams": streams}}).encode(encoding="utf-8")
+        )
+
+    def _handle_ws_message(self, raw: bytes) -> None:
+        """
+        Handle incoming WebSocket message.
+
+        Parameters
+        ----------
+        raw : bytes
+            The raw message bytes from WebSocket.
+
+        """
+        try:
+            # Decode JSON message
+            msg = self._decoder.decode(raw)
+
+            # Alpaca sends single messages for stream updates
+            msg_type = msg.get('stream')
+
+            if msg_type == "authorization":
+                # {"stream":"authorization","data":{"action":"authenticate","status":"authorized"}}
+                # {"stream":"authorization","data":{"action":"auth","message":"code=401, message=Unauthorized","status":"unauthorized"}}
+                data = msg.get('data')
+                if data is not None and data.get("status") == "authorized":
+                    self._log.info(f"Authorization success: {msg.get('data')}", LogColor.GREEN)
+                else:
+                    self._log.error(f"Authorization error: {data.get('message')}", LogColor.RED)                    
+            elif msg_type == "listening":
+                # Known stream:   {"stream":"listening","data":{"streams":["trade_updates"]}}
+                # Unknown stream: {"stream":"listening","data":{"streams":null}}
+                self._log.info(f"Listen response: {msg}")
+            elif msg_type == "trade_updates":
+                # {"stream":"trade_updates","data":{"at":"2026-02-17T15:15:03.426595Z","event_id":"01KHP2PKM2X2XH8WA8B4T2DMB1","event":"fill","timestamp":"2026-02-17T15:15:03.422682201Z","order":{"id":"b0c7c16a-c045-441f-9472-ec829c379367","client_order_id":"7bb3b4d9-768e-4759-a63d-1cc4b5a823c7","created_at":"2026-02-17T15:15:02.605113753Z","updated_at":"2026-02-17T15:15:03.425207431Z","submitted_at":"2026-02-17T15:15:02.853817969Z","filled_at":"2026-02-17T15:15:03.422682201Z","expired_at":null,"cancel_requested_at":null,"canceled_at":null,"failed_at":null,"replaced_at":null,"replaced_by":null,"replaces":null,"asset_id":"b28f4066-5c6d-479b-a2af-85dc1a8f16fb","symbol":"SPY","asset_class":"us_equity","notional":null,"qty":"21","filled_qty":"21","filled_avg_price":"676.94","order_class":"","order_type":"market","type":"market","side":"sell","position_intent":"sell_to_close","time_in_force":"day","limit_price":null,"stop_price":null,"status":"filled","extended_hours":false,"legs":null,"trail_percent":null,"trail_price":null,"hwm":null,"expires_at":"2026-02-17T21:00:00Z"},"price":"676.94","qty":"21","position_qty":"0","execution_id":"0b5db662-d68f-4604-aba7-dae432556a89"}}
+                self._handle_trade_update(msg.get('data'))
+            else:
+                self._log.warning(f"Unknown message type: {msg_type}")
+
+        except Exception as e:
+            self._log.error(f"Error handling WebSocket message: {e}")
+
+    def _handle_trade_update(self, data: dict) -> None:
+        # TODO: implement handler for trade_updates
+        self._log.warning(f"Unhandled trade_updates message: {data}")
 
     async def _generate_account_state(self, account_info) -> None:
         """

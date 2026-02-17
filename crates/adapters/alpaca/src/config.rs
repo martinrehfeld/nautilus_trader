@@ -213,13 +213,17 @@ impl AlpacaDataClientConfig {
                 AlpacaAssetClass::UsEquity => match self.data_feed {
                     AlpacaDataFeed::Iex => "wss://stream.data.alpaca.markets/v2/iex".to_string(),
                     AlpacaDataFeed::Sip => "wss://stream.data.alpaca.markets/v2/sip".to_string(),
+                    AlpacaDataFeed::Trading => panic!("Data feed 'Trading' is not valid for asset class 'UsEquity"),
                 },
                 AlpacaAssetClass::Crypto => {
                     "wss://stream.data.alpaca.markets/v1beta3/crypto/us".to_string()
                 }
                 AlpacaAssetClass::Option => {
                     "wss://stream.data.alpaca.markets/v1beta1/options".to_string()
-                }
+                },
+                AlpacaAssetClass::NotApplicable => {
+                    panic!("Asset class 'NotApplicable' is not valid for AlpacaDataClient")
+                },
             }
         })
     }

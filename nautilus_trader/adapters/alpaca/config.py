@@ -106,6 +106,8 @@ class AlpacaExecClientConfig(LiveExecClientConfig, frozen=True):
         If the client should connect to paper trading endpoints.
     base_url_http : str, optional
         Optional HTTP client custom endpoint override.
+    base_url_ws : str, optional
+        Optional WebSocket client custom endpoint override.
     proxy_url : str, optional
         Optional proxy URL for HTTP requests.
     http_timeout_secs : int, optional
@@ -121,6 +123,7 @@ class AlpacaExecClientConfig(LiveExecClientConfig, frozen=True):
     api_secret: str | None = None
     paper_trading: bool = True
     base_url_http: str | None = None
+    base_url_ws: str | None = None
     proxy_url: str | None = None
     http_timeout_secs: int | None = None
     max_retries: int | None = None

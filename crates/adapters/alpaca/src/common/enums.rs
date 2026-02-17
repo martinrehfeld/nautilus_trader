@@ -48,6 +48,8 @@ pub enum AlpacaAssetClass {
     Crypto,
     /// Options contracts.
     Option,
+    /// No associated data class (used for connection to trading updates stream)
+    NotApplicable,
 }
 
 /// Alpaca market data feed subscription level.
@@ -63,6 +65,8 @@ pub enum AlpacaDataFeed {
     Iex,
     /// SIP consolidated feed (paid tier, real-time).
     Sip,
+    /// Trading updates stream
+    Trading,
 }
 
 /// Alpaca order side.

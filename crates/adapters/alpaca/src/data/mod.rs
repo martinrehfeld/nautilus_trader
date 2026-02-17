@@ -107,6 +107,7 @@ impl AlpacaDataClient {
             AlpacaAssetClass::Option,
         ] {
             let ws_client = AlpacaWebSocketClient::new(
+                environment,
                 config.api_key.clone(),
                 config.api_secret.clone(),
                 asset_class,
@@ -401,6 +402,9 @@ impl AlpacaDataClient {
                     "Historical bars for options not yet implemented".to_string(),
                 ));
             }
+            AlpacaAssetClass::NotApplicable => {
+                panic!("Asset class 'NotApplicable' is invalid for AlpacaDataClient");
+            }
         };
 
         // Parse response
@@ -457,6 +461,9 @@ impl AlpacaDataClient {
                     "Historical trades for options not yet implemented".to_string(),
                 ));
             }
+            AlpacaAssetClass::NotApplicable => {
+                panic!("Asset class 'NotApplicable' is invalid for AlpacaDataClient");
+            }
         };
 
         // Parse response
@@ -512,6 +519,9 @@ impl AlpacaDataClient {
                 return Err(AlpacaError::NotImplemented(
                     "Historical quotes for options not yet implemented".to_string(),
                 ));
+            },
+            AlpacaAssetClass::NotApplicable => {
+                panic!("Asset class 'NotApplicable' is invalid for AlpacaDataClient");
             }
         };
 

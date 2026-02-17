@@ -119,6 +119,7 @@ class AlpacaDataClient(LiveMarketDataClient):
 
         # Create Alpaca WebSocket client for market data
         alpaca_ws_client = nautilus_pyo3.AlpacaWebSocketClient(
+            paper_trading=self._config.paper_trading,
             api_key=self._config.api_key or "",
             api_secret=self._config.api_secret or "",
             asset_class=self._config.asset_class,
@@ -170,6 +171,7 @@ class AlpacaDataClient(LiveMarketDataClient):
 
         # Create and send authentication message
         alpaca_ws_client = nautilus_pyo3.AlpacaWebSocketClient(
+            paper_trading=self._config.paper_trading,
             api_key=self._config.api_key or "",
             api_secret=self._config.api_secret or "",
             asset_class=self._config.asset_class,
