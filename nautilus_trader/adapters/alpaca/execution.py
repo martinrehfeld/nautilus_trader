@@ -306,7 +306,54 @@ class AlpacaExecutionClient(LiveExecutionClient):
 
     def _handle_trade_update(self, data: dict) -> None:
         # TODO: implement handler for trade_updates
-        self._log.warning(f"Unhandled trade_updates message: {data}")
+        # Unhandled trade_updates message: {'at': '2026-02-18T14:44:00.673663Z', 'event_id': '01KHRKAFH1CBM3S07DN04QMKD1', 'event': 'pending_new', 'timestamp': '2026-02-18T14:44:00.673663744Z', 'order': {'id': 'a8987702-ec1b-4ed8-91f8-0d190a5a44bd', 'client_order_id': 'O-20260218-144400-001-000-1', 'created_at': '2026-02-18T14:44:00.670178634Z', 'updated_at': '2026-02-18T14:44:00.672224394Z', 'submitted_at': '2026-02-18T14:44:00.670178634Z', 'filled_at': None, 'expired_at': None, 'cancel_requested_at': None, 'canceled_at': None, 'failed_at': None, 'replaced_at': None, 'replaced_by': None, 'replaces': None, 'asset_id': 'b28f4066-5c6d-479b-a2af-85dc1a8f16fb', 'symbol': 'SPY', 'asset_class': 'us_equity', 'notional': None, 'qty': '1', 'filled_qty': '0', 'filled_avg_price': None, 'order_class': '', 'order_type': 'market', 'type': 'market', 'side': 'buy', 'position_intent': 'buy_to_open', 'time_in_force': 'gtc', 'limit_price': None, 'stop_price': None, 'status': 'pending_new', 'extended_hours': False, 'legs': None, 'trail_percent': None, 'trail_price': None, 'hwm': None, 'expires_at': '2026-05-19T20:00:00Z'}}
+        # Unhandled trade_updates message: {'at': '2026-02-18T14:44:00.823054Z', 'event_id': '01KHRKAFNQDT1QM8YKXEJWKC6G', 'event': 'new', 'timestamp': '2026-02-18T14:44:00.820492812Z', 'order': {'id': 'a8987702-ec1b-4ed8-91f8-0d190a5a44bd', 'client_order_id': 'O-20260218-144400-001-000-1', 'created_at': '2026-02-18T14:44:00.670178634Z', 'updated_at': '2026-02-18T14:44:00.821994382Z', 'submitted_at': '2026-02-18T14:44:00.820493332Z', 'filled_at': None, 'expired_at': None, 'cancel_requested_at': None, 'canceled_at': None, 'failed_at': None, 'replaced_at': None, 'replaced_by': None, 'replaces': None, 'asset_id': 'b28f4066-5c6d-479b-a2af-85dc1a8f16fb', 'symbol': 'SPY', 'asset_class': 'us_equity', 'notional': None, 'qty': '1', 'filled_qty': '0', 'filled_avg_price': None, 'order_class': '', 'order_type': 'market', 'type': 'market', 'side': 'buy', 'position_intent': 'buy_to_open', 'time_in_force': 'gtc', 'limit_price': None, 'stop_price': None, 'status': 'new', 'extended_hours': False, 'legs': None, 'trail_percent': None, 'trail_price': None, 'hwm': None, 'expires_at': '2026-05-19T20:00:00Z'}, 'execution_id': '52e0de0e-68c2-46f7-85bb-574af60be2e7'}
+        # Unhandled trade_updates message: {'at': '2026-02-18T14:44:01.464533Z', 'event_id': '01KHRKAG9RCWC0NNWG6RW9JWZZ', 'event': 'fill', 'timestamp': '2026-02-18T14:44:01.460162023Z', 'order': {'id': 'a8987702-ec1b-4ed8-91f8-0d190a5a44bd', 'client_order_id': 'O-20260218-144400-001-000-1', 'created_at': '2026-02-18T14:44:00.670178634Z', 'updated_at': '2026-02-18T14:44:01.463049783Z', 'submitted_at': '2026-02-18T14:44:00.820493332Z', 'filled_at': '2026-02-18T14:44:01.460162023Z', 'expired_at': None, 'cancel_requested_at': None, 'canceled_at': None, 'failed_at': None, 'replaced_at': None, 'replaced_by': None, 'replaces': None, 'asset_id': 'b28f4066-5c6d-479b-a2af-85dc1a8f16fb',
+        # 'symbol': 'SPY', 'asset_class': 'us_equity', 'notional': None, 'qty': '1', 'filled_qty': '1',
+        # 'filled_avg_price': '685.28', 'order_class': '', 'order_type': 'market', 'type': 'market', 'side': 'buy',
+        # 'position_intent': 'buy_to_open', 'time_in_force': 'gtc', 'limit_price': None, 'stop_price': None,
+        # 'status': 'filled', 'extended_hours': False, 'legs': None, 'trail_percent': None, 'trail_price': None,
+        # 'hwm': None, 'expires_at': '2026-05-19T20:00:00Z'}, 'price': '685.28', 'qty': '1', 'position_qty': '1',
+        # 'execution_id': 'db7a1046-e9e1-44c2-afc0-4d7a80091470'}
+        try:
+            event_type = data.get('event')
+            order_data = data.get('order')
+            
+            if order_data is None:
+                self._log.warning(f"Received trade update without 'order' data: {data}")
+                return
+            
+            venue_order_id = VenueOrderId(order_data.get('id'))
+            client_order_id = ClientOrderId(order_data.get('client_order_id') or self._venue_order_id_to_client_order_id.get(venue_order_id) or order_data.get('id'))
+            order = self._cache.order(client_order_id)
+            self._log.info(f"Handling trade update for venue order '{venue_order_id}' (client order '{client_order_id}'): {data}")
+            self._log.info(f"Retrieved order '{client_order_id}' from Cache: {order}")
+
+            if event_type == "fill":
+                self._log.info(f"Generating OrderFill from trade_update...")
+                self.generate_order_filled(
+                    account_id=self.account_id,
+                    strategy_id=order.strategy_id,
+                    instrument_id=order.instrument_id,
+                    client_order_id=order.client_order_id,
+                    venue_order_id=venue_order_id,
+                    # venue_position_id=report.venue_position_id, ???
+                    # trade_id=report.trade_id, ???
+                    order_side=order.side,
+                    order_type=order.order_type,
+                    last_qty=Quantity.from_str(order_data.get('filled_qty') or "0"),
+                    last_px=Price.from_str(order_data.get('filled_avg_price')),
+                    quote_currency=Currency.from_str("USD"), # TODO: instrument.quote_currency,
+                    commission=None,
+                    liquidity_side=LiquiditySide.NO_LIQUIDITY_SIDE,
+                    ts_event=self._clock.timestamp_ns(), # TODO: parse order.get('filled_at')
+                )
+            else:
+                self._log.warning(f"Unhandled trade_updates message: {data}")
+
+        except Exception as e:
+            self._log.error(f"Error handling trade update: {e}")
+            return None
 
     async def _generate_account_state(self, account_info) -> None:
         """
