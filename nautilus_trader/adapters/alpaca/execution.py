@@ -55,6 +55,7 @@ from nautilus_trader.model.identifiers import AccountId
 from nautilus_trader.model.identifiers import ClientId
 from nautilus_trader.model.identifiers import ClientOrderId
 from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import PositionId
 from nautilus_trader.model.identifiers import TradeId
 from nautilus_trader.model.identifiers import Venue
 from nautilus_trader.model.identifiers import VenueOrderId
@@ -327,6 +328,7 @@ class AlpacaExecutionClient(LiveExecutionClient):
             
             venue_order_id = VenueOrderId(order_data.get('id'))
             client_order_id = ClientOrderId(order_data.get('client_order_id') or self._venue_order_id_to_client_order_id.get(venue_order_id) or order_data.get('id'))
+            venue_position_id = PositionId(client_order_id.value.rsplit("-", 1)[0])
             order = self._cache.order(client_order_id)
             self._log.info(f"Handling trade update for venue order '{venue_order_id}' (client order '{client_order_id}'): {data}")
             self._log.info(f"Retrieved order '{client_order_id}' from Cache: {order}")
@@ -338,14 +340,14 @@ class AlpacaExecutionClient(LiveExecutionClient):
                     instrument_id=order.instrument_id,
                     client_order_id=order.client_order_id,
                     venue_order_id=venue_order_id,
-                    # venue_position_id=report.venue_position_id, ???
-                    # trade_id=report.trade_id, ???
+                    venue_position_id=venue_position_id, # TODO: what is expected here???
+                    trade_id=TradeId(data.get('execution_id') or UUID4()),
                     order_side=order.side,
                     order_type=order.order_type,
                     last_qty=Quantity.from_str(order_data.get('filled_qty') or "0"),
                     last_px=Price.from_str(order_data.get('filled_avg_price')),
-                    quote_currency=Currency.from_str("USD"), # TODO: instrument.quote_currency,
-                    commission=None,
+                    quote_currency=self.base_currency, # TODO: instrument.quote_currency,
+                    commission=Money(0, self.base_currency),  # Alpaca doesn't provide commission in activities
                     liquidity_side=LiquiditySide.NO_LIQUIDITY_SIDE,
                     ts_event=self._clock.timestamp_ns(), # TODO: parse order.get('filled_at')
                 )
