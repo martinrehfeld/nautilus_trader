@@ -186,6 +186,8 @@ class AlpacaExecutionClient(LiveExecutionClient):
         )
 
         # Connect WebSocket client
+        # TODO: This is very strange: Why are we using WebSocketClient instead of
+        #       AlpacaWebSocketClient to call `connect` on?
         self._ws_client = await nautilus_pyo3.WebSocketClient.connect(
             loop_=self._loop,
             config=ws_config,
@@ -332,7 +334,6 @@ class AlpacaExecutionClient(LiveExecutionClient):
             if event_type == "fill":
                 self._log.info(f"Generating OrderFill from trade_update...")
                 self.generate_order_filled(
-                    account_id=self.account_id,
                     strategy_id=order.strategy_id,
                     instrument_id=order.instrument_id,
                     client_order_id=order.client_order_id,
