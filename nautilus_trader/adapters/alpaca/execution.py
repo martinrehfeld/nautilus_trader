@@ -308,16 +308,6 @@ class AlpacaExecutionClient(LiveExecutionClient):
             self._log.error(f"Error handling WebSocket message: {e}")
 
     def _handle_trade_update(self, data: dict) -> None:
-        # TODO: implement handler for trade_updates
-        # Unhandled trade_updates message: {'at': '2026-02-18T14:44:00.673663Z', 'event_id': '01KHRKAFH1CBM3S07DN04QMKD1', 'event': 'pending_new', 'timestamp': '2026-02-18T14:44:00.673663744Z', 'order': {'id': 'a8987702-ec1b-4ed8-91f8-0d190a5a44bd', 'client_order_id': 'O-20260218-144400-001-000-1', 'created_at': '2026-02-18T14:44:00.670178634Z', 'updated_at': '2026-02-18T14:44:00.672224394Z', 'submitted_at': '2026-02-18T14:44:00.670178634Z', 'filled_at': None, 'expired_at': None, 'cancel_requested_at': None, 'canceled_at': None, 'failed_at': None, 'replaced_at': None, 'replaced_by': None, 'replaces': None, 'asset_id': 'b28f4066-5c6d-479b-a2af-85dc1a8f16fb', 'symbol': 'SPY', 'asset_class': 'us_equity', 'notional': None, 'qty': '1', 'filled_qty': '0', 'filled_avg_price': None, 'order_class': '', 'order_type': 'market', 'type': 'market', 'side': 'buy', 'position_intent': 'buy_to_open', 'time_in_force': 'gtc', 'limit_price': None, 'stop_price': None, 'status': 'pending_new', 'extended_hours': False, 'legs': None, 'trail_percent': None, 'trail_price': None, 'hwm': None, 'expires_at': '2026-05-19T20:00:00Z'}}
-        # Unhandled trade_updates message: {'at': '2026-02-18T14:44:00.823054Z', 'event_id': '01KHRKAFNQDT1QM8YKXEJWKC6G', 'event': 'new', 'timestamp': '2026-02-18T14:44:00.820492812Z', 'order': {'id': 'a8987702-ec1b-4ed8-91f8-0d190a5a44bd', 'client_order_id': 'O-20260218-144400-001-000-1', 'created_at': '2026-02-18T14:44:00.670178634Z', 'updated_at': '2026-02-18T14:44:00.821994382Z', 'submitted_at': '2026-02-18T14:44:00.820493332Z', 'filled_at': None, 'expired_at': None, 'cancel_requested_at': None, 'canceled_at': None, 'failed_at': None, 'replaced_at': None, 'replaced_by': None, 'replaces': None, 'asset_id': 'b28f4066-5c6d-479b-a2af-85dc1a8f16fb', 'symbol': 'SPY', 'asset_class': 'us_equity', 'notional': None, 'qty': '1', 'filled_qty': '0', 'filled_avg_price': None, 'order_class': '', 'order_type': 'market', 'type': 'market', 'side': 'buy', 'position_intent': 'buy_to_open', 'time_in_force': 'gtc', 'limit_price': None, 'stop_price': None, 'status': 'new', 'extended_hours': False, 'legs': None, 'trail_percent': None, 'trail_price': None, 'hwm': None, 'expires_at': '2026-05-19T20:00:00Z'}, 'execution_id': '52e0de0e-68c2-46f7-85bb-574af60be2e7'}
-        # Unhandled trade_updates message: {'at': '2026-02-18T14:44:01.464533Z', 'event_id': '01KHRKAG9RCWC0NNWG6RW9JWZZ', 'event': 'fill', 'timestamp': '2026-02-18T14:44:01.460162023Z', 'order': {'id': 'a8987702-ec1b-4ed8-91f8-0d190a5a44bd', 'client_order_id': 'O-20260218-144400-001-000-1', 'created_at': '2026-02-18T14:44:00.670178634Z', 'updated_at': '2026-02-18T14:44:01.463049783Z', 'submitted_at': '2026-02-18T14:44:00.820493332Z', 'filled_at': '2026-02-18T14:44:01.460162023Z', 'expired_at': None, 'cancel_requested_at': None, 'canceled_at': None, 'failed_at': None, 'replaced_at': None, 'replaced_by': None, 'replaces': None, 'asset_id': 'b28f4066-5c6d-479b-a2af-85dc1a8f16fb',
-        # 'symbol': 'SPY', 'asset_class': 'us_equity', 'notional': None, 'qty': '1', 'filled_qty': '1',
-        # 'filled_avg_price': '685.28', 'order_class': '', 'order_type': 'market', 'type': 'market', 'side': 'buy',
-        # 'position_intent': 'buy_to_open', 'time_in_force': 'gtc', 'limit_price': None, 'stop_price': None,
-        # 'status': 'filled', 'extended_hours': False, 'legs': None, 'trail_percent': None, 'trail_price': None,
-        # 'hwm': None, 'expires_at': '2026-05-19T20:00:00Z'}, 'price': '685.28', 'qty': '1', 'position_qty': '1',
-        # 'execution_id': 'db7a1046-e9e1-44c2-afc0-4d7a80091470'}
         try:
             event_type = data.get('event')
             order_data = data.get('order')
@@ -330,11 +320,6 @@ class AlpacaExecutionClient(LiveExecutionClient):
             client_order_id = ClientOrderId(order_data.get('client_order_id') or self._venue_order_id_to_client_order_id.get(venue_order_id) or order_data.get('id'))
             order = self._cache.order(client_order_id)
 
-            # Order that has been placed from the Alpaca web UI
-            # 2026-02-19T17:20:02.382251002Z [INFO] AUTOTRADER-001.ExecClient-ALPACA: Handling trade update for venue order '64cccab7-7e9f-4104-9be9-19bb5d71cf7e' (client order '4396c02e-3d9c-4199-aaa6-ec52dc2692d8'): {'at': '2026-02-19T17:20:02.227002Z', 'event_id': '01KHVEMWNKWS0NMJZPMZ54GKF7', 'event': 'fill', 'timestamp': '2026-02-19T17:20:02.22327861Z', 'order': {'id': '64cccab7-7e9f-4104-9be9-19bb5d71cf7e', 'client_order_id': '4396c02e-3d9c-4199-aaa6-ec52dc2692d8', 'created_at': '2026-02-19T17:20:00.258586634Z', 'updated_at': '2026-02-19T17:20:02.22556472Z', 'submitted_at': '2026-02-19T17:20:00.688714529Z', 'filled_at': '2026-02-19T17:20:02.22327861Z', 'expired_at': None, 'cancel_requested_at': None, 'canceled_at': None, 'failed_at': None, 'replaced_at': None, 'replaced_by': None, 'replaces': None, 'asset_id': 'b28f4066-5c6d-479b-a2af-85dc1a8f16fb', 'symbol': 'SPY', 'asset_class': 'us_equity', 'notional': None, 'qty': '2', 'filled_qty': '2', 'filled_avg_price': '684.095', 'order_class': '', 'order_type': 'market', 'type': 'market', 'side': 'sell', 'position_intent': 'sell_to_close', 'time_in_force': 'day', 'limit_price': None, 'stop_price': None, 'status': 'filled', 'extended_hours': False, 'legs': None, 'trail_percent': None, 'trail_price': None, 'hwm': None, 'expires_at': '2026-02-19T21:00:00Z'}, 'price': '684.08', 'qty': '1', 'position_qty': '0', 'execution_id': '5745331b-2b70-47f2-a9c4-6f39b7634828'}
-            # 2026-02-19T17:20:02.382273042Z [INFO] AUTOTRADER-001.ExecClient-ALPACA: Retrieved order '4396c02e-3d9c-4199-aaa6-ec52dc2692d8' from Cache: None
-            # 2026-02-19T17:20:02.382276733Z [INFO] AUTOTRADER-001.ExecClient-ALPACA: Generating OrderFill from trade_update...
-            # 2026-02-19T17:20:02.384160421Z [ERROR] AUTOTRADER-001.ExecClient-ALPACA: Error handling trade update: 'NoneType' object has no attribute 'strategy_id'                    strategy_id=order.strategy_id, # TODO: must not be none!
             if order is None:
                 self._log.info(f"Order with client order ID '{client_order_id}' not found in Cache, ignoring update.")
                 return
@@ -344,12 +329,11 @@ class AlpacaExecutionClient(LiveExecutionClient):
 
             if event_type == "fill":
                 self._log.info(f"Generating OrderFill from trade_update...")
-                self.generate_order_filled( # defition in nautilus_trader/execution/client.pyx
+                # defition of `generate_order_filled` is in in nautilus_trader/execution/client.pyx
+                self.generate_order_filled(
                     instrument_id=order.instrument_id,
                     client_order_id=order.client_order_id,
                     venue_order_id=venue_order_id,
-                    # I could imagine it would make sense to assign something like this (would need to be aligned with the report generation):
-                    # venue_position_id=PositionId(client_order_id.value.rsplit("-", 1)[0]s)
                     venue_position_id=None,
                     trade_id=TradeId(data.get('execution_id') or UUID4()),
                     order_side=order.side,
