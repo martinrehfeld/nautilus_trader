@@ -331,6 +331,7 @@ class AlpacaExecutionClient(LiveExecutionClient):
                 self._log.info(f"Generating OrderFill from trade_update...")
                 # defition of `generate_order_filled` is in in nautilus_trader/execution/client.pyx
                 self.generate_order_filled(
+                    strategy_id=order.strategy_id,
                     instrument_id=order.instrument_id,
                     client_order_id=order.client_order_id,
                     venue_order_id=venue_order_id,
