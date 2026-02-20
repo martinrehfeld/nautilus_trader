@@ -328,7 +328,7 @@ class AlpacaExecutionClient(LiveExecutionClient):
             self._log.info(f"Retrieved order '{client_order_id}' from Cache: {order}")
 
             if event_type == "fill":
-                filled_at = order.get('filled_at') or data.get('at')
+                filled_at = order_data.get('filled_at') or data.get('at')
                 if filled_at is not None:
                     ts_event = millis_to_nanos(self._parse_timestamp_ms(filled_at))
                 else:
