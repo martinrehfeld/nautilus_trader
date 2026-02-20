@@ -328,6 +328,12 @@ class AlpacaExecutionClient(LiveExecutionClient):
             self._log.info(f"Retrieved order '{client_order_id}' from Cache: {order}")
 
             if event_type == "fill":
+                filled_at = order.get('filled_at') or data.get('at')
+                if filled_at is not None:
+                    ts_event = millis_to_nanos(self._parse_timestamp_ms(filled_at))
+                else:
+                    ts_event = self._clock.timestamp_ns()
+
                 self._log.info(f"Generating OrderFill from trade_update...")
                 # defition of `generate_order_filled` is in in nautilus_trader/execution/client.pyx
                 self.generate_order_filled(
@@ -341,10 +347,10 @@ class AlpacaExecutionClient(LiveExecutionClient):
                     order_type=order.order_type,
                     last_qty=Quantity.from_str(order_data.get('filled_qty') or "0"),
                     last_px=Price.from_str(order_data.get('filled_avg_price')),
-                    quote_currency=self.base_currency, # TODO: instrument.quote_currency,
+                    quote_currency=self.base_currency, # TODO: look up Instrument.quote_currency,
                     commission=Money(0, self.base_currency),  # Alpaca doesn't provide commission in activities
                     liquidity_side=LiquiditySide.NO_LIQUIDITY_SIDE,
-                    ts_event=self._clock.timestamp_ns(), # TODO: parse order.get('filled_at')
+                    ts_event=ts_event,
                 )
             else:
                 self._log.warning(f"Unhandled trade_updates message: {data}")
