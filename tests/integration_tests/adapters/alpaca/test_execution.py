@@ -18,12 +18,17 @@ Tests for Alpaca execution client order building.
 
 from decimal import Decimal
 from unittest.mock import MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
 from nautilus_trader.core.nautilus_pyo3.alpaca import ALPACA_VENUE
+from nautilus_trader.adapters.alpaca import AlpacaAssetClass
+from nautilus_trader.adapters.alpaca import AlpacaExecClientConfig
 from nautilus_trader.adapters.alpaca.execution import AlpacaExecutionClient
+from nautilus_trader.adapters.alpaca.providers import AlpacaInstrumentProvider
 from nautilus_trader.common.component import LiveClock
+from nautilus_trader.core import nautilus_pyo3
 from nautilus_trader.core.uuid import UUID4
 from nautilus_trader.model.currencies import BTC
 from nautilus_trader.model.currencies import USD
@@ -43,6 +48,87 @@ from nautilus_trader.model.objects import Price
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.model.orders import MarketOrder
 from nautilus_trader.model.orders import StopMarketOrder
+
+from tests.integration_tests.adapters.alpaca.conftest import _create_ws_mock
+
+
+@pytest.fixture
+def exec_client_builder(
+    event_loop,
+    mock_http_client,
+    msgbus,
+    cache,
+    live_clock,
+    mock_instrument_provider,
+):
+    def builder(monkeypatch, *, config_kwargs: dict | None = None):
+        trading_ws = _create_ws_mock()
+
+        monkeypatch.setattr(
+            "nautilus_trader.adapters.alpaca.execution.nautilus_pyo3.AlpacaWebSocketClient.connect",
+            trading_ws.connect
+        )
+
+        mock_http_client.reset_mock()
+        mock_instrument_provider.initialize.reset_mock()
+        mock_instrument_provider.instruments_pyo3.reset_mock()
+        mock_instrument_provider.instruments_pyo3.return_value = [MagicMock(name="py_instrument")]
+
+        config_kwargs = config_kwargs or {}
+        asset_classes = config_kwargs.pop(
+            "asset_classes",
+            (AlpacaAssetClass.UsEquity,),
+        )
+
+        # Set the mock provider's instrument_types to match config
+        mock_instrument_provider.asset_classes = asset_classes
+
+        config = AlpacaExecClientConfig(
+            api_key="test_api_key",
+            api_secret="test_api_secret",
+            instrument_provider=mock_instrument_provider,
+            **config_kwargs,
+        )
+
+        client = AlpacaExecutionClient(
+            loop=event_loop,
+            client=mock_http_client,
+            msgbus=msgbus,
+            cache=cache,
+            clock=live_clock,
+            instrument_provider=mock_instrument_provider,
+            config=config,
+            name=None,
+        )
+
+        return client, trading_ws, mock_http_client, mock_instrument_provider
+
+    return builder
+
+
+@pytest.mark.asyncio
+async def test_connect_success(exec_client_builder, monkeypatch):
+    # Arrange
+    client, trading_ws, http_client, instrument_provider = exec_client_builder(
+        monkeypatch,
+    )
+
+    monkeypatch.setattr(client, "_await_account_registered", AsyncMock())
+
+    # Act
+    await client._connect()
+
+    try:
+        # Assert
+        instrument_provider.initialize.assert_awaited_once()
+        http_client.get_account.assert_awaited_once()
+        trading_ws.connect.assert_awaited_once()
+    finally:
+        await client._disconnect()
+
+    # Assert
+    http_client.cancel_all_orders.assert_called_once()
+    trading_ws.disconnect.assert_called_once()
 
 
 # TODO: There is no AlpacaExecutionClient._build_order_request; probably need to

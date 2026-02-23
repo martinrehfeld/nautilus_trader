@@ -15,40 +15,121 @@
 
 //! Python bindings for the Alpaca WebSocket client.
 
-use pyo3::prelude::*;
+use std::sync::Arc;
+
+use nautilus_core::{python::clone_py_object};
+use nautilus_network::{python::websocket::WebSocketClientError, ratelimiter::quota::Quota, websocket::{MessageHandler, PingHandler}};
+use pyo3::{prelude::*, types::PyBytes};
+use tokio_tungstenite::tungstenite::Message;
 
 use crate::{
     common::enums::{AlpacaAssetClass, AlpacaDataFeed},
     websocket::client::AlpacaWebSocketClient,
 };
 
+
+fn to_websocket_pyerr(e: anyhow::Error) -> PyErr {
+    PyErr::new::<WebSocketClientError, _>(e.to_string())
+}
+
 #[pymethods]
 impl AlpacaWebSocketClient {
-    #[new]
-    #[pyo3(signature = (paper_trading, api_key, api_secret, asset_class, data_feed, url_override=None))]
-    fn py_new(
+    /// Create a connected websocket client.
+    ///
+    /// The handler and ping_handler callbacks are scheduled on the provided event loop
+    /// using `call_soon_threadsafe` to ensure they execute on the correct thread.
+    /// This is critical for thread safety since WebSocket messages arrive on
+    /// a Tokio worker thread, but Python callbacks (like those entering the
+    /// kernel via MessageBus) must run on the asyncio event loop thread.
+    ///
+    /// # Safety
+    ///
+    /// - Throws an Exception if it is unable to make websocket connection.
+    #[staticmethod]
+    #[pyo3(name = "connect", signature = (loop_, paper_trading, api_key, api_secret, asset_class, data_feed, url_override, handler, ping_handler = None, post_reconnection = None, keyed_quotas = Vec::new(), default_quota = None))]
+    #[allow(clippy::too_many_arguments)]
+    fn py_connect(
+        loop_: Py<PyAny>,
         paper_trading: bool,
         api_key: String,
         api_secret: String,
         asset_class: AlpacaAssetClass,
         data_feed: AlpacaDataFeed,
         url_override: Option<String>,
-    ) -> Self {
+        handler: Py<PyAny>,
+        ping_handler: Option<Py<PyAny>>,
+        post_reconnection: Option<Py<PyAny>>,
+        keyed_quotas: Vec<(String, Quota)>,
+        default_quota: Option<Quota>,
+        py: Python<'_>,
+    ) -> PyResult<Bound<'_, PyAny>> {
         let environment = if paper_trading {
             crate::common::AlpacaEnvironment::Paper
         } else {
             crate::common::AlpacaEnvironment::Live
         };
-        Self::new(environment, api_key, api_secret, asset_class, data_feed, url_override)
-    }
 
-    fn __repr__(&self) -> String {
-        format!(
-            "AlpacaWebSocketClient(url='{}', asset_class={:?}, connected={})",
-            self.url(),
-            self.asset_class(),
-            self.is_connected()
-        )
+        let call_soon_threadsafe: Py<PyAny> = loop_.getattr(py, "call_soon_threadsafe")?;
+        let call_soon_clone = clone_py_object(&call_soon_threadsafe);
+        let handler_clone = clone_py_object(&handler);
+
+        let message_handler: MessageHandler = Arc::new(move |msg: Message| {
+            Python::attach(|py| {
+                let py_bytes = match &msg {
+                    Message::Binary(data) => PyBytes::new(py, data),
+                    Message::Text(text) => PyBytes::new(py, text.as_bytes()),
+                    _ => return,
+                };
+
+                if let Err(e) = call_soon_clone.call1(py, (&handler_clone, py_bytes)) {
+                    log::error!("Error scheduling message handler on event loop: {e}");
+                }
+            });
+        });
+
+        let ping_handler_fn = ping_handler.map(|ping_handler| {
+            let ping_handler_clone = clone_py_object(&ping_handler);
+            let call_soon_clone = clone_py_object(&call_soon_threadsafe);
+
+            let ping_handler_fn: PingHandler = Arc::new(move |data: Vec<u8>| {
+                Python::attach(|py| {
+                    let py_bytes = PyBytes::new(py, &data);
+                    if let Err(e) = call_soon_clone.call1(py, (&ping_handler_clone, py_bytes)) {
+                        log::error!("Error scheduling ping handler on event loop: {e}");
+                    }
+                });
+            });
+            ping_handler_fn
+        });
+
+        let post_reconnection_fn = post_reconnection.map(|callback| {
+            let callback_clone = clone_py_object(&callback);
+            Arc::new(move || {
+                Python::attach(|py| {
+                    if let Err(e) = callback_clone.call0(py) {
+                        log::error!("Error calling post_reconnection handler: {e}");
+                    }
+                });
+            }) as Arc<dyn Fn() + Send + Sync>
+        });
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            Self::connect(
+                environment,
+                api_key,
+                api_secret,
+                asset_class,
+                data_feed,
+                url_override,
+                message_handler,
+                ping_handler_fn,
+                post_reconnection_fn,
+                keyed_quotas,
+                default_quota,
+            )
+            .await
+            .map_err(to_websocket_pyerr)
+        })
     }
 
     #[getter]
@@ -67,6 +148,12 @@ impl AlpacaWebSocketClient {
     #[pyo3(name = "is_connected")]
     fn py_is_connected(&self) -> bool {
         self.is_connected()
+    }
+
+    /// Disconnect the client
+    #[pyo3(name = "disconnect")]
+    fn py_disconnect(&self) -> () {
+        self.disconnect();
     }
 
     /// Get the authentication message for establishing WebSocket connection.

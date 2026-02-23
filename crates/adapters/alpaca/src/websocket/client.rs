@@ -15,21 +15,25 @@
 
 //! Alpaca WebSocket client implementation.
 
-use std::sync::{
+use anyhow::anyhow;
+use std::{any::Any, sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
-};
+}};
 
-use nautilus_network::websocket::WebSocketClient;
+use nautilus_common::log_error;
+use nautilus_network::{ratelimiter::quota::Quota, websocket::{MessageHandler, PingHandler, WebSocketClient, WebSocketConfig}};
 use tokio::sync::mpsc;
+use tokio_tungstenite::tungstenite::{Bytes, Message};
+use ustr::Ustr;
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
 use super::messages::{AlpacaWsAuthMessage, AlpacaWsMessage, AlpacaWsSubscribeMessage};
-use crate::common::{
+use crate::{common::{
     AlpacaEnvironment, credential::AlpacaCredential, enums::{AlpacaAssetClass, AlpacaDataFeed}, urls::get_ws_url
-};
+}, websocket::{AlpacaDataMessageHandler, AlpacaTradingMessageHandler, AlpacaTradingSubscriptionMessage}};
 
 /// Alpaca WebSocket client for market data streaming.
 #[derive(Debug)]
@@ -46,7 +50,122 @@ pub struct AlpacaWebSocketClient {
 }
 
 impl AlpacaWebSocketClient {
-    /// Creates a new Alpaca WebSocket client.
+    /// Creates a new connected Alpaca WebSocket client.
+    ///
+    /// # Arguments
+    ///
+    /// * `api_key` - Alpaca API key.
+    /// * `api_secret` - Alpaca API secret.
+    /// * `asset_class` - Asset class for the data stream.
+    /// * `data_feed` - Data feed subscription level (IEX or SIP).
+    /// * `url_override` - Optional URL override for testing.
+    /// Connect to the WebSocket server.
+    /// * `message_handler` - Callback for incoming messages
+    /// * ... more optional args, same as nautilus_network::websocket::client::WebSocketClient
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection process fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if subscription arguments fail to serialize to JSON.
+    pub async fn connect(
+        environment: AlpacaEnvironment,
+        api_key: String,
+        api_secret: String,
+        asset_class: AlpacaAssetClass,
+        data_feed: AlpacaDataFeed,
+        url_override: Option<String>,
+        message_handler: MessageHandler,
+        ping_handler: Option<PingHandler>,
+        post_reconnection: Option<Arc<dyn Fn() + Send + Sync>>,
+        keyed_quotas: Vec<(String, Quota)>,
+        default_quota: Option<Quota>,
+    ) -> anyhow::Result<Self> {
+        let credential = AlpacaCredential::new(api_key, api_secret);
+        let url =
+            url_override.unwrap_or_else(|| get_ws_url(environment, asset_class, data_feed).to_string());
+
+        let config = WebSocketConfig {
+            url: url.clone(),
+            headers: vec![],
+            heartbeat: Some(20),
+            heartbeat_msg: None,
+            reconnect_timeout_ms: None,
+            reconnect_delay_initial_ms: None,
+            reconnect_delay_max_ms: None,
+            reconnect_backoff_factor: None,
+            reconnect_jitter_ms: None,
+            reconnect_max_attempts: None
+        };
+
+        let signal = Arc::new(AtomicBool::new(false));
+        let signal_clone = signal.clone();
+
+        let message_handler_wrapper:MessageHandler = Arc::new(move |msg: Message| {
+            if matches!(msg, Message::Text(ref text) if text.as_str() == nautilus_network::RECONNECTED) {
+                return;
+            }
+    
+            // TODO: introduce a "mode" to chose between AlpacaTradingMessageHandler and AlpacaDataMessageHandler;
+            //       could use data_feed == Trading?
+            // TODO: move this out of the closure and make it part of the AlpacaWebsocketClient struct, so a
+            //       a upstream client can query for subscriptions.
+            let mut alpaca_message_handler = AlpacaTradingMessageHandler::new();
+
+            match alpaca_message_handler.process_message(msg.clone().into_data().as_ref()) {
+                Ok(None) => {
+                    if alpaca_message_handler.is_authenticated() {
+                        signal_clone.store(true, Ordering::SeqCst);
+                    } else {
+                        signal_clone.store(false, Ordering::SeqCst);
+                    }
+                },
+                Ok(_) => message_handler(msg),
+                Err(e) => log_error!("Unable to process incoming websocket message: {e}")
+            }
+        });
+
+        let ws_client = WebSocketClient::connect(
+            config,
+            Some(message_handler_wrapper),
+            ping_handler,
+            post_reconnection,
+            keyed_quotas,
+            default_quota,
+        )
+        .await?;
+
+        let alpaca_ws_client = Self {
+            url,
+            credential,
+            asset_class,
+            inner: Arc::new(tokio::sync::RwLock::new(Some(ws_client))),
+            signal: signal,
+            message_tx: None,
+        };
+
+        // initiate auth
+        let auth_message = alpaca_ws_client.auth_message();
+        alpaca_ws_client.send_text(auth_message, None).await?;
+
+        alpaca_ws_client.wait_until_active(10.0).await?;
+
+        // TODO: initial subscribe message needs to be added as new argument, String type?
+        let subscribe_message = AlpacaTradingSubscriptionMessage::new(
+            vec!["trade_updates".to_string()]
+        );
+        let subscribe_message_string = serde_json::to_string(&subscribe_message).expect("Failed to serialize subscribe message");
+        alpaca_ws_client.send_text(subscribe_message_string, None).await?;
+
+        Ok(alpaca_ws_client)
+    }
+
+    /// FIXME: this is only here for backward compat, once the AlpacaDataClient is also using #connect,
+    ///        it can be removed.
+    /// 
+    /// Creates a new unconnected Alpaca WebSocket client.
     ///
     /// # Arguments
     ///
@@ -78,6 +197,35 @@ impl AlpacaWebSocketClient {
         }
     }
 
+    /// Wait until the WebSocket connection is active.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection times out.
+    pub async fn wait_until_active(&self, timeout_secs: f64) -> anyhow::Result<()> {
+        let timeout = tokio::time::Duration::from_secs_f64(timeout_secs);
+
+        tokio::time::timeout(timeout, async {
+            while !self.is_connected() {
+                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .map_err(|_| {
+            anyhow!("WebSocket connection timeout after {timeout_secs} seconds")
+        })?;
+
+        Ok(())
+    }
+
+    /// Disconect the Websocket connection by dropping the inner client.
+    /// TODO: make this async to properly close the inner clients socket
+    pub fn disconnect(&self) -> () {
+        self.signal.store(false, Ordering::SeqCst);
+        let mut write_lock = self.inner.blocking_write();
+        *write_lock = None;
+    }
+
     /// Returns the WebSocket URL being used.
     #[must_use]
     pub fn url(&self) -> &str {
@@ -94,6 +242,30 @@ impl AlpacaWebSocketClient {
     #[must_use]
     pub fn is_connected(&self) -> bool {
         self.signal.load(Ordering::SeqCst)
+    }
+
+    /// Sends the given text `data` to the server.
+    ///
+    /// # Errors
+    ///
+    /// Returns a websocket error if unable to send.
+    #[allow(unused_variables)]
+    pub async fn send_text(&self, data: String, keys: Option<&[Ustr]>) -> Result<(), nautilus_network::error::SendError> {
+        let read_lock = self.inner.read().await;
+        let client: &WebSocketClient = read_lock.as_ref().expect("no WebSocketClient");
+        client.send_text(data, keys).await
+    }
+
+    /// Sends the given bytes `data` to the server.
+    ///
+    /// # Errors
+    ///
+    /// Returns a websocket error if unable to send.
+    #[allow(unused_variables)]
+    pub async fn send_bytes(&self, data: Vec<u8>, keys: Option<&[Ustr]>) -> Result<(), nautilus_network::error::SendError> {
+        let read_lock = self.inner.read().await;
+        let client: &WebSocketClient = read_lock.as_ref().expect("no WebSocketClient");
+        client.send_bytes(data, keys).await
     }
 
     /// Creates the authentication message for the WebSocket connection.
