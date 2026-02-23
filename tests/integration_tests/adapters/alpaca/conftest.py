@@ -15,8 +15,9 @@
 
 import pytest
 
-from nautilus_trader.adapters.alpaca.common.constants import ALPACA_VENUE
-from nautilus_trader.adapters.alpaca.http.client import AlpacaHttpClient
+from nautilus_trader.core.nautilus_pyo3.alpaca import ALPACA_VENUE
+from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaEnvironment
+from nautilus_trader.core.nautilus_pyo3.alpaca import AlpacaHttpClient
 from nautilus_trader.common.component import LiveClock
 from nautilus_trader.common.component import Logger
 from nautilus_trader.model.identifiers import Venue
@@ -35,9 +36,9 @@ def live_logger():
 @pytest.fixture(scope="session")
 def alpaca_http_client():
     client = AlpacaHttpClient(
+        environment=AlpacaEnvironment.Paper,
         api_key="SOME_ALPACA_API_KEY",
         api_secret="SOME_ALPACA_API_SECRET",
-        paper_trading=True,
     )
     return client
 

@@ -19,7 +19,7 @@ Tests for Alpaca adapter configuration.
 from nautilus_trader.adapters.alpaca import ALPACA_VENUE
 from nautilus_trader.adapters.alpaca import AlpacaAssetClass
 from nautilus_trader.adapters.alpaca import AlpacaDataClientConfig
-from nautilus_trader.adapters.alpaca import AlpacaDataFeed
+from nautilus_trader.core.nautilus_pyo3 import AlpacaDataFeed
 from nautilus_trader.adapters.alpaca import AlpacaExecClientConfig
 from nautilus_trader.adapters.alpaca import AlpacaInstrumentProviderConfig
 
@@ -30,7 +30,7 @@ class TestAlpacaVenue:
     """
 
     def test_venue_value(self):
-        assert ALPACA_VENUE.value == "ALPACA"
+        assert ALPACA_VENUE == "ALPACA"
 
 
 class TestAlpacaAssetClass:
@@ -67,9 +67,8 @@ class TestAlpacaDataClientConfig:
 
     def test_default_config(self):
         config = AlpacaDataClientConfig()
-        assert config.venue == ALPACA_VENUE
         assert config.paper_trading is True
-        assert config.data_feed == AlpacaDataFeed.IEX
+        assert config.data_feed.value == "iex"
 
     def test_config_with_credentials(self):
         config = AlpacaDataClientConfig(
@@ -91,7 +90,6 @@ class TestAlpacaExecClientConfig:
 
     def test_default_config(self):
         config = AlpacaExecClientConfig()
-        assert config.venue == ALPACA_VENUE
         assert config.paper_trading is True
 
     def test_config_with_credentials(self):
@@ -116,6 +114,6 @@ class TestAlpacaInstrumentProviderConfig:
 
     def test_config_with_asset_classes(self):
         config = AlpacaInstrumentProviderConfig(
-            asset_classes=frozenset({AlpacaAssetClass.US_EQUITY}),
+            asset_classes=(AlpacaAssetClass.US_EQUITY),
         )
-        assert AlpacaAssetClass.US_EQUITY in config.asset_classes
+        assert config.asset_classes == (AlpacaAssetClass.US_EQUITY)

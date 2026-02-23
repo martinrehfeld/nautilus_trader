@@ -239,6 +239,8 @@ impl MarginValidationResult {
 #[derive(Debug)]
 pub struct AlpacaOptionsMarginCalculator {
     inner: RustMarginCalculator,
+    #[pyo3(get)]
+    default_contract_multiplier: u32,
 }
 
 #[pymethods]
@@ -248,6 +250,7 @@ impl AlpacaOptionsMarginCalculator {
     fn new(default_contract_multiplier: u32) -> Self {
         Self {
             inner: RustMarginCalculator::new(default_contract_multiplier),
+            default_contract_multiplier: default_contract_multiplier,
         }
     }
 
@@ -311,6 +314,7 @@ impl AlpacaOptionsMarginCalculator {
     /// -------
     /// str
     ///     The maintenance margin requirement as decimal string
+    #[pyo3(signature = (positions, contract_multiplier=None))]
     fn calculate_maintenance_margin(
         &self,
         positions: Vec<PyRef<OptionPosition>>,
@@ -342,6 +346,7 @@ impl AlpacaOptionsMarginCalculator {
     /// -------
     /// CostBasisResult
     ///     Result containing maintenance margin, net premium, and cost basis
+    #[pyo3(signature = (legs, leg_premiums, contract_multiplier=None))]
     fn calculate_order_cost_basis(
         &self,
         legs: Vec<PyRef<OrderLeg>>,
@@ -388,6 +393,7 @@ impl AlpacaOptionsMarginCalculator {
     /// -------
     /// MarginValidationResult
     ///     Validation result with is_valid flag, new margin, and message
+    #[pyo3(signature = (current_positions, new_position, available_margin, contract_multiplier=None))]
     fn validate_position_margin(
         &self,
         current_positions: Vec<PyRef<OptionPosition>>,
