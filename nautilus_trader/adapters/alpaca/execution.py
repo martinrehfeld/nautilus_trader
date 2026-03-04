@@ -172,6 +172,7 @@ class AlpacaExecutionClient(LiveExecutionClient):
             self._log.info(f"Account fetched: {account_info.account_number}", LogColor.GREEN)
 
             # Generate account state
+            # FIXME: Error on '_connect' ValueError(`total` (99943.99 USD) - `locked` (0.00 USD) != `free` (106684.79 USD))
             await self._generate_account_state(account_info)
 
         except Exception as e:
