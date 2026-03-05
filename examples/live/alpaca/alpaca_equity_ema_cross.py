@@ -77,7 +77,8 @@ class EMACrossConfig(StrategyConfig, frozen=True):
     bar_type: BarType
     fast_ema_period: int = 10
     slow_ema_period: int = 20
-    trade_size: Decimal = Decimal(100)  # Dollar amount to trade
+    subscribe_quote_ticks: bool = False
+    subscribe_trade_ticks: bool = False
 
 
 class EMACrossStrategy(Strategy):
@@ -96,7 +97,8 @@ class EMACrossStrategy(Strategy):
         super().__init__(config)
         self.instrument_id = config.instrument_id
         self.bar_type = config.bar_type
-        self.trade_size = config.trade_size
+        self.should_subscribe_quote_ticks = config.subscribe_quote_ticks
+        self.should_subscribe_trade_ticks = config.subscribe_trade_ticks
 
         # Create EMA indicators
         self.fast_ema = ExponentialMovingAverage(config.fast_ema_period)
@@ -111,7 +113,6 @@ class EMACrossStrategy(Strategy):
         """
         self.log.info(f"Starting EMA Cross strategy for {self.instrument_id}")
         self.log.info(f"Fast EMA: {self.fast_ema.period}, Slow EMA: {self.slow_ema.period}")
-        self.log.info(f"Trade size: ${self.trade_size}")
 
         # For FAKEPACA test symbol, create a synthetic instrument since it doesn't exist in REST API
         if "FAKEPACA" in str(self.instrument_id):
@@ -143,10 +144,12 @@ class EMACrossStrategy(Strategy):
         self.subscribe_bars(self.bar_type)
 
         # Subscribe to real-time quotes (bid/ask updates)
-        self.subscribe_quote_ticks(self.instrument_id)
+        if self.should_subscribe_quote_ticks:
+            self.subscribe_quote_ticks(self.instrument_id)
 
         # Subscribe to real-time trades
-        self.subscribe_trade_ticks(self.instrument_id)
+        if self.should_subscribe_trade_ticks:
+            self.subscribe_trade_ticks(self.instrument_id)
 
     def on_bar(self, bar):
         """
@@ -251,17 +254,8 @@ class EMACrossStrategy(Strategy):
         """
         # Check if we have a position to close
         if not self.portfolio.is_flat(self.instrument_id):
-            # Get current position
-            position = self.portfolio.position(self.instrument_id)
-            if position and position.quantity > 0:
-                order = self.order_factory.market(
-                    instrument_id=self.instrument_id,
-                    order_side=OrderSide.SELL,
-                    quantity=position.quantity,
-                )
-
-                self.submit_order(order)
-                self.log.info(f"📉 Submitted SELL order: {order.client_order_id}")
+            self.log.info(f"📉 Closing all positions for {self.instrument_id}")
+            self.close_all_positions(self.instrument_id)
         else:
             self.log.info("No position to close, skipping SELL")
 
@@ -366,7 +360,6 @@ def main():
         bar_type=bar_type,
         fast_ema_period=10,
         slow_ema_period=20,
-        trade_size=Decimal(1000),  # $1000 per trade
     )
     strategy = EMACrossStrategy(config=strategy_config)
 
@@ -388,7 +381,6 @@ def main():
     print(f"Bar Type: {bar_type}")
     print(f"Fast EMA: {strategy_config.fast_ema_period}")
     print(f"Slow EMA: {strategy_config.slow_ema_period}")
-    print(f"Trade Size: ${strategy_config.trade_size}")
     print("Paper Trading: True (safe mode)")
     if use_test_mode:
         print(f"WebSocket URL: {ws_url}")
