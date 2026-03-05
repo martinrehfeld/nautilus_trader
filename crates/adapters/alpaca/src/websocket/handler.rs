@@ -16,38 +16,40 @@
 //! Message handler for Alpaca WebSocket streams.
 
 use anyhow::anyhow;
+use enum_dispatch::enum_dispatch;
+use nautilus_common::log_info;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 
+use crate::common::AlpacaDataFeed;
 
-/// Abstract message handler.
-pub trait AlpacaMessageHandler {
+
+/// Abstract message handler interface.
+#[enum_dispatch]
+pub trait AlpacaAbstractMesssageHandler: 'static + Send {
     fn process_message(&mut self, raw: &[u8]) -> anyhow::Result<Option<Vec<u8>>>;
     fn is_authenticated(&self) -> bool;
 }
 
-/// AlpacaMessageHandler facade for AlpacaDataMessageHandler.
-impl AlpacaMessageHandler for AlpacaDataMessageHandler {
-    fn process_message(&mut self, raw: &[u8]) -> anyhow::Result<Option<Vec<u8>>> {
-        self.process_message(raw)
-    }
+#[derive(Debug)]
+#[enum_dispatch(AlpacaAbstractMesssageHandler)]
+pub enum AlpacaMessageHandler {
+    Data(AlpacaDataMessageHandler),
+    Trading(AlpacaTradingMessageHandler),
+}
 
-    fn is_authenticated(&self) -> bool {
-        self.is_authenticated()
+impl AlpacaMessageHandler {
+    pub fn for_feed(feed_type: AlpacaDataFeed) -> Self {
+        match feed_type {
+            AlpacaDataFeed::Trading =>
+                AlpacaTradingMessageHandler::new().into(),
+            _ =>
+                AlpacaDataMessageHandler::new().into(),
+        }
     }
 }
 
-/// AlpacaMessageHandler facade for AlpacaTradingMessageHandler.
-impl AlpacaMessageHandler for AlpacaTradingMessageHandler {
-    fn process_message(&mut self, raw: &[u8]) -> anyhow::Result<Option<Vec<u8>>> {
-        self.process_message(raw)
-    }
-
-    fn is_authenticated(&self) -> bool {
-        self.is_authenticated()
-    }
-}
 
 /// Type of WebSocket message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,6 +216,56 @@ impl Default for AlpacaDataMessageHandler {
     }
 }
 
+impl AlpacaAbstractMesssageHandler for AlpacaDataMessageHandler {
+    /// Processes a raw WebSocket message and routes it appropriately.
+    ///
+    /// Returns:
+    /// - `Some(bytes)` if the message is market data and should be forwarded to the data handler
+    /// - `None` if the message is a control message (success, error, subscription)
+    ///
+    /// # Arguments
+    ///
+    /// * `raw` - Raw message bytes
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if message processing fails
+    fn process_message(&mut self, raw: &[u8]) -> anyhow::Result<Option<Vec<u8>>> {
+        let msg_type = self.parse_message_type(raw)?;
+
+        match msg_type {
+            AlpacaDataMessageType::Success => {
+                log_info!("AlpacaDataMessageHandler.process_message: calling handle_success");
+                self.handle_success(raw)?;
+                Ok(None)
+            }
+            AlpacaDataMessageType::Error => {
+                self.handle_error(raw)?;
+                Ok(None)
+            }
+            AlpacaDataMessageType::Subscription => {
+                self.handle_subscription(raw)?;
+                Ok(None)
+            }
+            AlpacaDataMessageType::Trade | AlpacaDataMessageType::Quote | AlpacaDataMessageType::Bar => {
+                // Forward market data messages to handler
+                Ok(Some(raw.to_vec()))
+            }
+            AlpacaDataMessageType::Unknown => {
+                log::warn!("Unknown message type, forwarding to handler");
+                Ok(Some(raw.to_vec()))
+            }
+        }
+    }
+
+
+    /// Returns whether the client is authenticated.
+    fn is_authenticated(&self) -> bool {
+        self.is_authenticated
+    }
+
+}
+
 impl AlpacaDataMessageHandler {
     /// Creates a new message handler.
     #[must_use]
@@ -224,12 +276,6 @@ impl AlpacaDataMessageHandler {
             subscribed_quotes: HashSet::new(),
             subscribed_bars: HashSet::new(),
         }
-    }
-
-    /// Returns whether the client is authenticated.
-    #[must_use]
-    pub fn is_authenticated(&self) -> bool {
-        self.is_authenticated
     }
 
     /// Returns the current trade subscriptions.
@@ -267,15 +313,7 @@ impl AlpacaDataMessageHandler {
     pub fn parse_message_type(&self, raw: &[u8]) -> anyhow::Result<AlpacaDataMessageType> {
         let value: Value = serde_json::from_slice(raw)?;
 
-        // Messages can be either a single object or an array
-        if let Some(array) = value.as_array() {
-            // If array, check first message type
-            if let Some(first) = array.first() {
-                if let Some(msg_type) = first.get("T").and_then(|t| t.as_str()) {
-                    return Ok(AlpacaDataMessageType::from_str(msg_type));
-                }
-            }
-        } else if let Some(msg_type) = value.get("T").and_then(|t| t.as_str()) {
+        if let Some(msg_type) = value.get("T").and_then(|t| t.as_str()) {
             return Ok(AlpacaDataMessageType::from_str(msg_type));
         }
 
@@ -358,46 +396,6 @@ impl AlpacaDataMessageHandler {
         );
 
         Ok(msg)
-    }
-
-    /// Processes a raw WebSocket message and routes it appropriately.
-    ///
-    /// Returns:
-    /// - `Some(bytes)` if the message is market data and should be forwarded to the data handler
-    /// - `None` if the message is a control message (success, error, subscription)
-    ///
-    /// # Arguments
-    ///
-    /// * `raw` - Raw message bytes
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if message processing fails
-    pub fn process_message(&mut self, raw: &[u8]) -> anyhow::Result<Option<Vec<u8>>> {
-        let msg_type = self.parse_message_type(raw)?;
-
-        match msg_type {
-            AlpacaDataMessageType::Success => {
-                self.handle_success(raw)?;
-                Ok(None)
-            }
-            AlpacaDataMessageType::Error => {
-                self.handle_error(raw)?;
-                Ok(None)
-            }
-            AlpacaDataMessageType::Subscription => {
-                self.handle_subscription(raw)?;
-                Ok(None)
-            }
-            AlpacaDataMessageType::Trade | AlpacaDataMessageType::Quote | AlpacaDataMessageType::Bar => {
-                // Forward market data messages to handler
-                Ok(Some(raw.to_vec()))
-            }
-            AlpacaDataMessageType::Unknown => {
-                log::warn!("Unknown message type, forwarding to handler");
-                Ok(Some(raw.to_vec()))
-            }
-        }
     }
 
     /// Clears subscription tracking (used after unsubscribe).
@@ -529,6 +527,52 @@ impl Default for AlpacaTradingMessageHandler {
     }
 }
 
+impl AlpacaAbstractMesssageHandler for AlpacaTradingMessageHandler {
+    /// Processes a raw WebSocket message and routes it appropriately.
+    ///
+    /// Returns:
+    /// - `Some(bytes)` if the message is market data and should be forwarded to the data handler
+    /// - `None` if the message is a control message (success, error, subscription)
+    ///
+    /// # Arguments
+    ///
+    /// * `raw` - Raw message bytes
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if message processing fails
+    fn process_message(&mut self, raw: &[u8]) -> anyhow::Result<Option<Vec<u8>>> {
+        let msg: Value = serde_json::from_slice(raw)?;
+        let msg_type = self.parse_message_type(&msg);
+
+        match msg_type {
+            AlpacaTradingMessageType::Authorization => {
+                let data = msg.get("data").ok_or(anyhow!("missing `data` in AlpacaTradingAuthorizationMessage message"))?;
+                self.handle_authorization(data)?;
+                Ok(None)
+            }
+            AlpacaTradingMessageType::Subscription => {
+                let data = msg.get("data").ok_or(anyhow!("missing `data` in AlpacaTradingSubscriptionConfirmation message"))?;
+                self.handle_subscription(data)?;
+                Ok(None)
+            }
+            AlpacaTradingMessageType::TradeUpdate => {
+                // Forward data messages to handler
+                Ok(Some(raw.to_vec()))
+            }
+            AlpacaTradingMessageType::Unknown => {
+                log::warn!("Unknown message type, forwarding to handler");
+                Ok(Some(raw.to_vec()))
+            }
+        }
+    }
+
+    /// Returns whether the client is authenticated.
+    fn is_authenticated(&self) -> bool {
+        self.is_authenticated
+    }
+}
+
 impl AlpacaTradingMessageHandler {
     /// Creates a new message handler.
     #[must_use]
@@ -537,12 +581,6 @@ impl AlpacaTradingMessageHandler {
             is_authenticated: false,
             subscribed_streams: HashSet::new(),
         }
-    }
-
-    /// Returns whether the client is authenticated.
-    #[must_use]
-    pub fn is_authenticated(&self) -> bool {
-        self.is_authenticated
     }
 
     /// Returns the current trade subscriptions.
@@ -566,15 +604,7 @@ impl AlpacaTradingMessageHandler {
     ///
     /// Returns an error if the message cannot be parsed as JSON
     pub fn parse_message_type(&self, msg: &Value) -> AlpacaTradingMessageType {
-        // Messages can be either a single object or an array
-        if let Some(array) = msg.as_array() {
-            // If array, check first message type
-            if let Some(first) = array.first() {
-                if let Some(msg_type) = first.get("stream").and_then(|t| t.as_str()) {
-                    return AlpacaTradingMessageType::from_str(msg_type);
-                }
-            }
-        } else if let Some(msg_type) = msg.get("stream").and_then(|t| t.as_str()) {
+        if let Some(msg_type) = msg.get("stream").and_then(|t| t.as_str()) {
             return AlpacaTradingMessageType::from_str(msg_type);
         }
 
@@ -634,45 +664,6 @@ impl AlpacaTradingMessageHandler {
         );
 
         Ok(msg)
-    }
-
-    /// Processes a raw WebSocket message and routes it appropriately.
-    ///
-    /// Returns:
-    /// - `Some(bytes)` if the message is market data and should be forwarded to the data handler
-    /// - `None` if the message is a control message (success, error, subscription)
-    ///
-    /// # Arguments
-    ///
-    /// * `raw` - Raw message bytes
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if message processing fails
-    pub fn process_message(&mut self, raw: &[u8]) -> anyhow::Result<Option<Vec<u8>>> {
-        let msg: Value = serde_json::from_slice(raw)?;
-        let msg_type = self.parse_message_type(&msg);
-
-        match msg_type {
-            AlpacaTradingMessageType::Authorization => {
-                let data = msg.get("data").ok_or(anyhow!("missing `data` in AlpacaTradingAuthorizationMessage message"))?;
-                self.handle_authorization(data)?;
-                Ok(None)
-            }
-            AlpacaTradingMessageType::Subscription => {
-                let data = msg.get("data").ok_or(anyhow!("missing `data` in AlpacaTradingSubscriptionConfirmation message"))?;
-                self.handle_subscription(data)?;
-                Ok(None)
-            }
-            AlpacaTradingMessageType::TradeUpdate => {
-                // Forward data messages to handler
-                Ok(Some(raw.to_vec()))
-            }
-            AlpacaTradingMessageType::Unknown => {
-                log::warn!("Unknown message type, forwarding to handler");
-                Ok(Some(raw.to_vec()))
-            }
-        }
     }
 
     /// Clears all subscribed streams.

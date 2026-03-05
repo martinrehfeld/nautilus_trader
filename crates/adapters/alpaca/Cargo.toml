@@ -53,6 +53,7 @@ nautilus-network = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
+enum_dispatch = { workspace = true }
 futures-util = { workspace = true }
 indexmap = { workspace = true }
 rust_decimal = { workspace = true }

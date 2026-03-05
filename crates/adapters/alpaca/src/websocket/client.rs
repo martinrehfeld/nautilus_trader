@@ -33,10 +33,10 @@ use pyo3::prelude::*;
 use super::messages::{AlpacaWsAuthMessage, AlpacaWsMessage, AlpacaWsSubscribeMessage};
 use crate::{common::{
     AlpacaEnvironment, credential::AlpacaCredential, enums::{AlpacaAssetClass, AlpacaDataFeed}, urls::get_ws_url
-}, websocket::{AlpacaMessageHandler, AlpacaDataMessageHandler, AlpacaTradingMessageHandler, AlpacaTradingSubscriptionMessage}};
+}, websocket::{AlpacaAbstractMesssageHandler, AlpacaMessageHandler, AlpacaTradingSubscriptionMessage}};
 
 /// Alpaca WebSocket client for market data streaming.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "python", pyclass(module = "nautilus_pyo3.alpaca"))]
 pub struct AlpacaWebSocketClient {
     url: String,
@@ -103,28 +103,46 @@ impl AlpacaWebSocketClient {
         let signal = Arc::new(AtomicBool::new(false));
         let signal_clone = signal.clone();
 
-        let message_handler_wrapper:MessageHandler = Arc::new(move |msg: Message| {
+        let message_handler_wrapper: MessageHandler = Arc::new(move |msg: Message| {
             if matches!(msg, Message::Text(ref text) if text.as_str() == nautilus_network::RECONNECTED) {
                 return;
             }
     
             // TODO: move this out of the closure and make it part of the AlpacaWebsocketClient struct, so a
             //       a upstream client could query for subscriptions.
-            let mut alpaca_message_handler: Box<dyn AlpacaMessageHandler> = match data_feed {
-                AlpacaDataFeed::Trading => Box::new(AlpacaTradingMessageHandler::new()),
-                _ => Box::new(AlpacaDataMessageHandler::new()),
-            };
-
-            match alpaca_message_handler.process_message(msg.clone().into_data().as_ref()) {
-                Ok(None) => {
-                    if alpaca_message_handler.is_authenticated() {
-                        signal_clone.store(true, Ordering::SeqCst);
-                    } else {
-                        signal_clone.store(false, Ordering::SeqCst);
+            let mut alpaca_message_handler = AlpacaMessageHandler::for_feed(data_feed);
+            let json_parse_result: Result<serde_json::Value, serde_json::Error> =
+                serde_json::from_slice(msg.clone().into_data().as_ref());
+            let values: Vec<serde_json::Value> = match json_parse_result {
+                Ok(value) => {
+                    match value {
+                        serde_json::Value::Array(list) => {
+                            list
+                        },
+                        _  => vec![value]
                     }
                 },
-                Ok(_) => message_handler(msg),
-                Err(e) => log_error!("Unable to process incoming websocket message: {e}")
+                Err(e) => {
+                    log_error!("Ignoring incoming non-JSON websocket message: {e}");
+                    vec![]
+                }
+            };
+
+            for value in values {
+                let value_string: &str = &value.to_string();
+                let msg: Message = value_string.into();
+                let bytes = value_string.as_bytes();
+                match alpaca_message_handler.process_message(bytes) {
+                    Ok(None) => {
+                        if alpaca_message_handler.is_authenticated() {
+                            signal_clone.store(true, Ordering::SeqCst);
+                        } else {
+                            signal_clone.store(false, Ordering::SeqCst);
+                        }
+                    },
+                    Ok(_) => message_handler(msg),
+                    Err(e) => log_error!("Unable to process incoming websocket message: {e}")
+                }
             }
         });
 
@@ -154,11 +172,13 @@ impl AlpacaWebSocketClient {
         alpaca_ws_client.wait_until_active(10.0).await?;
 
         // TODO: initial subscribe message needs to be added as new argument, String type?
-        let subscribe_message = AlpacaTradingSubscriptionMessage::new(
-            vec!["trade_updates".to_string()]
-        );
-        let subscribe_message_string = serde_json::to_string(&subscribe_message).expect("Failed to serialize subscribe message");
-        alpaca_ws_client.send_text(subscribe_message_string, None).await?;
+        if data_feed == AlpacaDataFeed::Trading {
+            let subscribe_message = AlpacaTradingSubscriptionMessage::new(
+                vec!["trade_updates".to_string()]
+            );
+            let subscribe_message_string = serde_json::to_string(&subscribe_message).expect("Failed to serialize subscribe message");
+            alpaca_ws_client.send_text(subscribe_message_string, None).await?;
+        }
 
         Ok(alpaca_ws_client)
     }
@@ -241,6 +261,9 @@ impl AlpacaWebSocketClient {
     pub fn is_connected(&self) -> bool {
         self.signal.load(Ordering::SeqCst)
     }
+
+    /// Return the inner Webclient
+    // pub websocket
 
     /// Sends the given text `data` to the server.
     ///

@@ -17,6 +17,7 @@
 
 use std::sync::Arc;
 
+use anyhow::anyhow;
 use nautilus_core::{python::clone_py_object};
 use nautilus_network::{python::websocket::WebSocketClientError, ratelimiter::quota::Quota, websocket::{MessageHandler, PingHandler}};
 use pyo3::{prelude::*, types::PyBytes};
@@ -163,6 +164,21 @@ impl AlpacaWebSocketClient {
     #[pyo3(name = "disconnect")]
     fn py_disconnect(&self) -> () {
         self.disconnect();
+    }
+
+    /// Send bytes of Utf8Text on the websocket.
+    #[pyo3(name = "send_text")]
+    fn py_send_text<'py>(
+        &self,
+        py: Python<'py>,
+        data: Vec<u8>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.send_bytes(data, None)
+            .await
+            .map_err(|e: nautilus_network::error::SendError| to_websocket_pyerr(anyhow!(e)))
+        })
     }
 
     /// Get the authentication message for establishing WebSocket connection.
