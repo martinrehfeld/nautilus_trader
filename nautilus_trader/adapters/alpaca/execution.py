@@ -127,8 +127,6 @@ class AlpacaExecutionClient(LiveExecutionClient):
             clock=clock,
         )
 
-        self._instrument_provider: AlpacaInstrumentProvider = instrument_provider
-
         # Configuration
         self._config = config
         self._log.info(f"paper_trading={config.paper_trading}", LogColor.BLUE)
@@ -147,7 +145,6 @@ class AlpacaExecutionClient(LiveExecutionClient):
 
         # WebSocket API
         self._ws_client: nautilus_pyo3.AlpacaWebSocketClient | nautilus_pyo3.WebSocketClientError = nautilus_pyo3.WebSocketClientError(Exception("not yet connected"))
-        self._ws_client_futures: set[asyncio.Future] = set() # TODO: am I using this?
         self._decoder = msgspec.json.Decoder()
 
         # Track order mappings
@@ -193,7 +190,7 @@ class AlpacaExecutionClient(LiveExecutionClient):
         
         if isinstance(self._ws_client, nautilus_pyo3.WebSocketClientError):
             self._log.error("Error connecting to Alpaca execution services updates stream")
-            raise
+            raise(self._ws_client)
 
         self._log.info(f"Connected to Alpaca execution services updates stream {self._ws_client.url}", LogColor.GREEN)
         
@@ -244,7 +241,7 @@ class AlpacaExecutionClient(LiveExecutionClient):
                 # {"stream":"trade_updates","data":{"at":"2026-02-17T15:15:03.426595Z","event_id":"01KHP2PKM2X2XH8WA8B4T2DMB1","event":"fill","timestamp":"2026-02-17T15:15:03.422682201Z","order":{"id":"b0c7c16a-c045-441f-9472-ec829c379367","client_order_id":"7bb3b4d9-768e-4759-a63d-1cc4b5a823c7","created_at":"2026-02-17T15:15:02.605113753Z","updated_at":"2026-02-17T15:15:03.425207431Z","submitted_at":"2026-02-17T15:15:02.853817969Z","filled_at":"2026-02-17T15:15:03.422682201Z","expired_at":null,"cancel_requested_at":null,"canceled_at":null,"failed_at":null,"replaced_at":null,"replaced_by":null,"replaces":null,"asset_id":"b28f4066-5c6d-479b-a2af-85dc1a8f16fb","symbol":"SPY","asset_class":"us_equity","notional":null,"qty":"21","filled_qty":"21","filled_avg_price":"676.94","order_class":"","order_type":"market","type":"market","side":"sell","position_intent":"sell_to_close","time_in_force":"day","limit_price":null,"stop_price":null,"status":"filled","extended_hours":false,"legs":null,"trail_percent":null,"trail_price":null,"hwm":null,"expires_at":"2026-02-17T21:00:00Z"},"price":"676.94","qty":"21","position_qty":"0","execution_id":"0b5db662-d68f-4604-aba7-dae432556a89"}}
                 self._handle_trade_update(msg.get('data'))
             else:
-                self._log.warning(f"Unknown message type: {msg_type}")
+                self._log.warning(f"Unhandled message type: {msg_type}")
 
         except Exception as e:
             self._log.error(f"Error handling WebSocket message: {e}")
