@@ -20,6 +20,35 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 
+
+/// Abstract message handler.
+pub trait AlpacaMessageHandler {
+    fn process_message(&mut self, raw: &[u8]) -> anyhow::Result<Option<Vec<u8>>>;
+    fn is_authenticated(&self) -> bool;
+}
+
+/// AlpacaMessageHandler facade for AlpacaDataMessageHandler.
+impl AlpacaMessageHandler for AlpacaDataMessageHandler {
+    fn process_message(&mut self, raw: &[u8]) -> anyhow::Result<Option<Vec<u8>>> {
+        self.process_message(raw)
+    }
+
+    fn is_authenticated(&self) -> bool {
+        self.is_authenticated()
+    }
+}
+
+/// AlpacaMessageHandler facade for AlpacaTradingMessageHandler.
+impl AlpacaMessageHandler for AlpacaTradingMessageHandler {
+    fn process_message(&mut self, raw: &[u8]) -> anyhow::Result<Option<Vec<u8>>> {
+        self.process_message(raw)
+    }
+
+    fn is_authenticated(&self) -> bool {
+        self.is_authenticated()
+    }
+}
+
 /// Type of WebSocket message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlpacaDataMessageType {
@@ -303,6 +332,12 @@ impl AlpacaDataMessageHandler {
         raw: &[u8],
     ) -> anyhow::Result<AlpacaDataSubscriptionConfirmation> {
         let msg: AlpacaDataSubscriptionConfirmation = serde_json::from_slice(raw)?;
+
+        // TODO: AFAIK, this would also trigger as a response to a "unscubscribe",
+        //       so logic for _removal_ of symbols is needed!
+        //       If Alpaca always replies with a full list of all subscribed symbols,
+        //       it could be as easy as clearing all subscriptions before re-inserting
+        //       the symbols.
 
         // Update subscription state
         for symbol in &msg.trades {

@@ -16,7 +16,7 @@
 //! Alpaca WebSocket client implementation.
 
 use anyhow::anyhow;
-use std::{any::Any, sync::{
+use std::{sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 }};
@@ -24,7 +24,7 @@ use std::{any::Any, sync::{
 use nautilus_common::log_error;
 use nautilus_network::{ratelimiter::quota::Quota, websocket::{MessageHandler, PingHandler, WebSocketClient, WebSocketConfig}};
 use tokio::sync::mpsc;
-use tokio_tungstenite::tungstenite::{Bytes, Message};
+use tokio_tungstenite::tungstenite::Message;
 use ustr::Ustr;
 
 #[cfg(feature = "python")]
@@ -33,7 +33,7 @@ use pyo3::prelude::*;
 use super::messages::{AlpacaWsAuthMessage, AlpacaWsMessage, AlpacaWsSubscribeMessage};
 use crate::{common::{
     AlpacaEnvironment, credential::AlpacaCredential, enums::{AlpacaAssetClass, AlpacaDataFeed}, urls::get_ws_url
-}, websocket::{AlpacaDataMessageHandler, AlpacaTradingMessageHandler, AlpacaTradingSubscriptionMessage}};
+}, websocket::{AlpacaMessageHandler, AlpacaDataMessageHandler, AlpacaTradingMessageHandler, AlpacaTradingSubscriptionMessage}};
 
 /// Alpaca WebSocket client for market data streaming.
 #[derive(Debug)]
@@ -108,11 +108,12 @@ impl AlpacaWebSocketClient {
                 return;
             }
     
-            // TODO: introduce a "mode" to chose between AlpacaTradingMessageHandler and AlpacaDataMessageHandler;
-            //       could use data_feed == Trading?
             // TODO: move this out of the closure and make it part of the AlpacaWebsocketClient struct, so a
-            //       a upstream client can query for subscriptions.
-            let mut alpaca_message_handler = AlpacaTradingMessageHandler::new();
+            //       a upstream client could query for subscriptions.
+            let mut alpaca_message_handler: Box<dyn AlpacaMessageHandler> = match data_feed {
+                AlpacaDataFeed::Trading => Box::new(AlpacaTradingMessageHandler::new()),
+                _ => Box::new(AlpacaDataMessageHandler::new()),
+            };
 
             match alpaca_message_handler.process_message(msg.clone().into_data().as_ref()) {
                 Ok(None) => {
@@ -162,9 +163,6 @@ impl AlpacaWebSocketClient {
         Ok(alpaca_ws_client)
     }
 
-    /// FIXME: this is only here for backward compat, once the AlpacaDataClient is also using #connect,
-    ///        it can be removed.
-    /// 
     /// Creates a new unconnected Alpaca WebSocket client.
     ///
     /// # Arguments

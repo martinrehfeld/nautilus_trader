@@ -132,24 +132,6 @@ impl AlpacaWebSocketClient {
         })
     }
 
-    #[new]
-    #[pyo3(signature = (paper_trading, api_key, api_secret, asset_class, data_feed, url_override=None))]
-    fn py_new(
-        paper_trading: bool,
-        api_key: String,
-        api_secret: String,
-        asset_class: AlpacaAssetClass,
-        data_feed: AlpacaDataFeed,
-        url_override: Option<String>,
-    ) -> Self {
-        let environment = if paper_trading {
-            crate::common::AlpacaEnvironment::Paper
-        } else {
-            crate::common::AlpacaEnvironment::Live
-        };
-        Self::new(environment, api_key, api_secret, asset_class, data_feed, url_override)
-    }
-
     fn __repr__(&self) -> String {
         format!(
             "AlpacaWebSocketClient(url='{}', asset_class={:?}, connected={})",

@@ -91,15 +91,16 @@ class AlpacaDataClient(LiveMarketDataClient):
             instrument_provider=instrument_provider,
         )
 
+        # Configuration
         self._config = config
-        self._http_client = client
-
-        # Log configuration
         self._log.info(f"data_feed={config.data_feed}", LogColor.BLUE)
         self._log.info(f"paper_trading={config.paper_trading}", LogColor.BLUE)
 
+        # HTTP API
+        self._http_client = client
+
         # WebSocket client (will be initialized on connect)
-        self._ws_client: nautilus_pyo3.WebSocketClient | None = None
+        self._ws_client: nautilus_pyo3.AlpacaWebSocketClient | nautilus_pyo3.WebSocketClientError = nautilus_pyo3.WebSocketClientError(Exception("not yet connected"))
         self._decoder = msgspec.json.Decoder()
 
         # Track subscriptions
@@ -117,132 +118,42 @@ class AlpacaDataClient(LiveMarketDataClient):
         # Initialize instrument provider
         await self._instrument_provider.initialize()
 
-        # Create Alpaca WebSocket client for market data
-        alpaca_ws_client = nautilus_pyo3.AlpacaWebSocketClient(
+        # Connect WebSocket client
+        self._ws_client = await nautilus_pyo3.AlpacaWebSocketClient.connect(
+            loop_=self._loop,
             paper_trading=self._config.paper_trading,
             api_key=self._config.api_key or "",
             api_secret=self._config.api_secret or "",
             asset_class=self._config.asset_class,
             data_feed=self._config.data_feed,
             url_override=self._config.base_url_ws,
-        )
-
-        # Create WebSocket config
-        ws_config = nautilus_pyo3.WebSocketConfig(
-            url=alpaca_ws_client.url,
-            headers=[],
-            heartbeat=20,
-        )
-
-        # Create WebSocket client
-        self._ws_client = await nautilus_pyo3.WebSocketClient.connect(
-            loop_=self._loop,
-            config=ws_config,
             handler=self._handle_ws_message,
-            post_reconnection=self._post_reconnection,
         )
+        
+        if isinstance(self._ws_client, nautilus_pyo3.WebSocketClientError):
+            self._log.error("Error connecting to Alpaca execution services updates stream")
+            raise(self._ws_client)
 
-        # Perform initial authentication
-        await self._post_connection()
-
-        self._log.info(f"Connected to Alpaca data feed {alpaca_ws_client.url}", LogColor.GREEN)
+        self._log.info(f"Connected to Alpaca data feed {self._ws_client.url}", LogColor.GREEN)
 
     async def _disconnect(self) -> None:
         """
         Disconnect from Alpaca market data feeds.
         """
         self._log.info("Disconnecting from Alpaca data feeds...")
+        
+        # Clear tracked subscriptions
+        self._trade_subscriptions.clear()
+        self._quote_subscriptions.clear()
+        self._bar_subscriptions.clear()
+        self._orderbook_subscriptions.clear()
 
         # Close WebSocket connection
-        if self._ws_client:
-            await self._ws_client.disconnect()
+        if isinstance(self._ws_client, nautilus_pyo3.AlpacaWebSocketClient):
+            self._ws_client.disconnect()
             self._ws_client = None
 
         self._log.info("Disconnected from Alpaca data feeds", LogColor.GREEN)
-
-    async def _post_connection(self) -> None:
-        """
-        Actions to perform post connection.
-
-        Sends authentication message to Alpaca WebSocket.
-        """
-        if not self._ws_client:
-            return
-
-        # Create and send authentication message
-        alpaca_ws_client = nautilus_pyo3.AlpacaWebSocketClient(
-            paper_trading=self._config.paper_trading,
-            api_key=self._config.api_key or "",
-            api_secret=self._config.api_secret or "",
-            asset_class=self._config.asset_class,
-            data_feed=self._config.data_feed,
-            url_override=self._config.base_url_ws,
-        )
-
-        auth_msg = alpaca_ws_client.auth_message()
-        self._log.debug(f"Sending auth message: {auth_msg}")
-        await self._ws_client.send_text(auth_msg.encode("utf-8"))
-
-    async def _post_reconnection(self) -> None:
-        """
-        Actions to perform post reconnection.
-
-        Re-authenticates and re-subscribes to all active streams.
-        """
-        await self._post_connection()
-
-        # Resubscribe to all active subscriptions
-        if self._trade_subscriptions:
-            await self._resubscribe_trades(list(self._trade_subscriptions))
-
-        if self._quote_subscriptions:
-            await self._resubscribe_quotes(list(self._quote_subscriptions))
-
-        if self._bar_subscriptions:
-            await self._resubscribe_bars(list(self._bar_subscriptions))
-
-        if self._orderbook_subscriptions:
-            await self._resubscribe_orderbooks(list(self._orderbook_subscriptions))
-
-    async def _resubscribe_trades(self, symbols: list[str]) -> None:
-        """Resubscribe to trade streams."""
-        if not self._ws_client:
-            return
-
-        normalized_symbols = [self._normalize_symbol(s) for s in symbols]
-        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_trades_message(normalized_symbols)
-        await self._ws_client.send_text(msg.encode("utf-8"))
-        self._log.info(f"Resubscribed to trades: {symbols}")
-
-    async def _resubscribe_quotes(self, symbols: list[str]) -> None:
-        """Resubscribe to quote streams."""
-        if not self._ws_client:
-            return
-
-        normalized_symbols = [self._normalize_symbol(s) for s in symbols]
-        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_quotes_message(normalized_symbols)
-        await self._ws_client.send_text(msg.encode("utf-8"))
-        self._log.info(f"Resubscribed to quotes: {symbols}")
-
-    async def _resubscribe_bars(self, symbols: list[str]) -> None:
-        """Resubscribe to bar streams."""
-        if not self._ws_client:
-            return
-
-        normalized_symbols = [self._normalize_symbol(s) for s in symbols]
-        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_bars_message(normalized_symbols)
-        await self._ws_client.send_text(msg.encode("utf-8"))
-        self._log.info(f"Resubscribed to bars: {symbols}")
-
-    async def _resubscribe_orderbooks(self, symbols: list[str]) -> None:
-        """Resubscribe to orderbook streams."""
-        if not self._ws_client:
-            return
-
-        normalized_symbols = [self._normalize_symbol(s) for s in symbols]
-        msg = nautilus_pyo3.AlpacaWebSocketClient.subscribe_orderbooks_message(normalized_symbols)
-        await self._ws_client.send_text(msg.encode("utf-8"))
-        self._log.info(f"Resubscribed to orderbooks: {symbols}")
 
     def _handle_ws_message(self, raw: bytes) -> None:
         """
@@ -265,11 +176,7 @@ class AlpacaDataClient(LiveMarketDataClient):
             for msg in messages:
                 msg_type = msg.get("T")
 
-                if msg_type == "success":
-                    self._log.info(f"Connection success: {msg.get('msg')}", LogColor.GREEN)
-                elif msg_type == "subscription":
-                    self._log.info(f"Subscription confirmed: {msg}")
-                elif msg_type == "error":
+                if msg_type == "error":
                     self._log.error(f"WebSocket error: {msg.get('msg')} (code={msg.get('code')})")
                 elif msg_type == "t":
                     self._handle_trade(msg)
@@ -280,7 +187,7 @@ class AlpacaDataClient(LiveMarketDataClient):
                 elif msg_type == "o":
                     self._handle_orderbook(msg)
                 else:
-                    self._log.warning(f"Unknown message type: {msg_type}")
+                    self._log.warning(f"Unhandled message type: {msg_type}")
 
         except Exception as e:
             self._log.error(f"Error handling WebSocket message: {e}")
