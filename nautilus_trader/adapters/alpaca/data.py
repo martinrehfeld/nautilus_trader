@@ -336,7 +336,7 @@ class AlpacaDataClient(LiveMarketDataClient):
             The subscribe trade ticks command.
 
         """
-        if not self._ws_client:
+        if isinstance(self._ws_client, nautilus_pyo3.WebSocketClientError):
             self._log.error("WebSocket client not connected")
             return
 
@@ -359,7 +359,7 @@ class AlpacaDataClient(LiveMarketDataClient):
             The subscribe quote ticks command.
 
         """
-        if not self._ws_client:
+        if isinstance(self._ws_client, nautilus_pyo3.WebSocketClientError):
             self._log.error("WebSocket client not connected")
             return
 
@@ -393,7 +393,7 @@ class AlpacaDataClient(LiveMarketDataClient):
             The subscribe bars command.
 
         """
-        if not self._ws_client:
+        if isinstance(self._ws_client, nautilus_pyo3.WebSocketClientError):
             self._log.error("WebSocket client not connected")
             return
 
@@ -416,7 +416,7 @@ class AlpacaDataClient(LiveMarketDataClient):
             The subscribe order book deltas command.
 
         """
-        if not self._ws_client:
+        if isinstance(self._ws_client, nautilus_pyo3.WebSocketClientError):
             self._log.error("WebSocket client not connected")
             return
 
@@ -431,7 +431,7 @@ class AlpacaDataClient(LiveMarketDataClient):
 
     async def _unsubscribe_trade_ticks(self, command) -> None:
         """Unsubscribe from trade ticks."""
-        if not self._ws_client:
+        if isinstance(self._ws_client, nautilus_pyo3.WebSocketClientError):
             return
 
         instrument_id = command.instrument_id
@@ -444,7 +444,7 @@ class AlpacaDataClient(LiveMarketDataClient):
 
     async def _unsubscribe_quote_ticks(self, command) -> None:
         """Unsubscribe from quote ticks."""
-        if not self._ws_client:
+        if isinstance(self._ws_client, nautilus_pyo3.WebSocketClientError):
             return
 
         instrument_id = command.instrument_id
@@ -457,7 +457,7 @@ class AlpacaDataClient(LiveMarketDataClient):
 
     async def _unsubscribe_bars(self, command) -> None:
         """Unsubscribe from bars."""
-        if not self._ws_client:
+        if isinstance(self._ws_client, nautilus_pyo3.WebSocketClientError):
             return
 
         bar_type = command.bar_type
@@ -470,7 +470,7 @@ class AlpacaDataClient(LiveMarketDataClient):
 
     async def _unsubscribe_order_book_deltas(self, command) -> None:
         """Unsubscribe from order book deltas."""
-        if not self._ws_client:
+        if isinstance(self._ws_client, nautilus_pyo3.WebSocketClientError):
             return
 
         instrument_id = command.instrument_id
